@@ -77,14 +77,14 @@ STRUCT
     field: ONAM TRUE;
     io: i;
     '}
-    xPumpFaultLock : BOOL := FALSE;
+    q_xPumpFaultLock : BOOL := FALSE;
     // i_xPumpLockReset: BOOL := FALSE; Inherit ST_PTM.xReset
     // Error messages
     {attribute 'pytmc' := '
     pv: ErrorMessage;
     io: i;
     '}
-    sError : STRING;
+    q_sError : STRING;
     {attribute 'pytmc' := '
     pv: Power_MON;
     io: i;

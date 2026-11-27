@@ -114,7 +114,7 @@ CASE (step) OF
         END_IF
         IF tR1TimeOut.Q THEN
             step:= 90;
-            iq_stPtm.xPumpFaultLock := TRUE;
+            iq_stPtm.q_xPumpFaultLock := TRUE;
             nErrorCode:= 930; // R1 Signal at Start time out.
            // fbLogger(sMsg:='Timeout: Pump could not achieve running speed.', eSevr:=TcEventSeverity.Warning);
         END_IF
@@ -139,7 +139,7 @@ CASE (step) OF
             step:= 90;
             tR1Fault.IN := FALSE;
             tFaultWindowElapsed.IN := FALSE;
-            iq_stPtm.xPumpFaultLock := TRUE;
+            iq_stPtm.q_xPumpFaultLock := TRUE;
             nErrorCode:= 920; // R1 Signal Lost multiple times.
             //fbLogger(sMsg:='Running signal Lost multiple times.', eSevr:=TcEventSeverity.Warning);
         ELSIF tFaultWindowElapsed.Q  THEN
@@ -159,7 +159,7 @@ CASE (step) OF
         step := 95;
 
     95:
-        IF (NOT iq_stPtm.xPumpFaultLock) OR iq_stPtm.xRunSW THEN
+        IF (NOT iq_stPtm.q_xPumpFaultLock) OR iq_stPtm.xRunSW THEN
             step:=0;
         END_IF
 END_CASE
@@ -168,7 +168,7 @@ END_CASE
 (* FAULT signal*)
 IF (iq_stPtm.i_xFault) AND (step < 90 ) THEN
     iq_stPtm.eState := pumpFAULT; // no need taken care of in the state
-    iq_stPtm.xPumpFaultLock := TRUE;
+    iq_stPtm.q_xPumpFaultLock := TRUE;
     nErrorCode := 900; // Pump Controller FAULT
     step:=90;
 END_IF
@@ -177,14 +177,14 @@ END_IF
 (*Pump Lock Reset bit*)
 IF (iq_stPtm.xResetSW ) THEN
     iq_stPtm.xResetSW := FALSE;
-    iq_stPtm.xPumpFaultLock := FALSE;
+    iq_stPtm.q_xPumpFaultLock := FALSE;
 END_IF
 
 (*Check backing gauge pressure*)
 //xBackingPressureOK := i_stGauge.xPRESS_OK AND ( i_stGauge.rPRESS < iq_stPtm.rBackingPressureSP);
 
 (* Interlock Sum *)
-iq_stPtm.xExtRunOk := i_xExtILKOk AND NOT iq_stPtm.i_xFault AND NOT iq_stPtm.xPumpFaultLock AND NOT(tILK.Q);
+iq_stPtm.xExtRunOk := i_xExtILKOk AND NOT iq_stPtm.i_xFault AND NOT iq_stPtm.q_xPumpFaultLock AND NOT(tILK.Q);
 
 IF NOT iq_stPtm.xExtRunOk AND (NOT (step >= 90)) THEN
     step:=0;
@@ -196,7 +196,7 @@ IF (NOT iq_stPtm.xRunSW) AND (NOT (step >= 90)) AND (NOT (step = 10)) THEN
 END_IF
 
 // Log faults Moved to ACT_Logger
-(*tErrorPresent(CLK:=iq_stPtm.xPumpFaultLock);
+(*tErrorPresent(CLK:=iq_stPtm.q_xPumpFaultLock);
 IF tErrorPresent.Q THEN
     fbJson.StartObject();
     fbJson.AddKey('vacuum_typecode');
@@ -216,7 +216,7 @@ tR1TimeOut(IN := (step=40), PT:=tTimeOutDuration);
 (* IO Mapping*)
 IO();
 (*Assign Error Message*)
-iq_stPtm.sError := ErrorMessage(nErrorCode, iq_stPtm.eState);
+iq_stPtm.q_sError := ErrorMessage(nErrorCode, iq_stPtm.eState);
 // Log States and triggers
 ACT_Logger();
 (*Validate Backing Pressure set point doesn't exceed the Maximum backingPressure*)
@@ -261,8 +261,8 @@ IF tAction.Q THEN fbLogger(sMsg:='Pump commanded to start', eSevr:=TcEventSeveri
 
 
 // Log FAULT
-tFault(CLK:= iq_stPTM.i_xFault OR iq_stPtm.xPumpFaultLock);
-IF tFault.Q THEN fbLogger(sMsg:=iq_stPtm.sError, eSevr:=TcEventSeverity.Critical); END_IF
+tFault(CLK:= iq_stPTM.i_xFault OR iq_stPtm.q_xPumpFaultLock);
+IF tFault.Q THEN fbLogger(sMsg:=iq_stPtm.q_sError, eSevr:=TcEventSeverity.Critical); END_IF
 
 ]]></ST>
       </Implementation>
