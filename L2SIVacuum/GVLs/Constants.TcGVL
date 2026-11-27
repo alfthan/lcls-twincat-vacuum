@@ -4,6 +4,23 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    (* --- Analog input terminal scaling (hardware dependent): change here only --- *)
+    (* Full-scale raw count of the analog input terminal read by the gauge FBs
+       (a Beckhoff EL3174 on its 10 V range returns 30518 counts at full scale). *)
+    gc_uiAnalogTermFullScaleBits : UINT := 30518;
+    (* Full-scale input voltage of that terminal in volts: rV := FullScaleVolts * raw / FullScaleBits *)
+    gc_rAnalogTermFullScaleVolts : REAL := 10.0;
+    (* --- MKS 9xx series logarithmic pressure output (as per manual) --- *)
+    (* Lower end of the output span that carries a valid pressure *)
+    gc_rMKS9xxValidSpanMin : REAL := 0.1; // V
+    (* Upper end of the output span that carries a valid pressure *)
+    gc_rMKS9xxValidSpanMax : REAL := 8.7; // V
+    (* Upper end of the span above gc_rMKS9xxValidSpanMax in which the gauge reports itself off *)
+    gc_rMKS9xxOffSpanMax : REAL := 10.0; // V
+    (* Decade base of the vendor law: pressure[Torr] := base ^ (rV - exponent offset) *)
+    gc_rMKS9xxDecadeBase : REAL := 10.0;
+    (* Exponent offset, in volts, subtracted from rV before the exponentiation *)
+    gc_rMKS9xxExponentOffset : REAL := 10.0; // V
 END_VAR
 ]]></Declaration>
   </GVL>

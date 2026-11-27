@@ -26,7 +26,7 @@ VAR
     timer:TON;
     (*Default set point 50 mT*)
     rDefaultVAC_SP: REAL := 9E-3; // as per manual
-    iTermBits: UINT := 30518 ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    iTermBits: UINT := Constants.gc_uiAnalogTermFullScaleBits ; // The terminal's maximum value in bits, default EL3174 as per vacuum architecture
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
     q_xHV_DIS AT %Q* : BOOL := TRUE; // Active Low
@@ -43,18 +43,18 @@ IF PG.rVAC_SP = 0 THEN
     PG.rVAC_SP := rDefaultVAC_SP;
 END_IF
 // check no div by zero
-If (iTermBits=0) THEN iTermBits := 30518;END_IF
-rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
+If (iTermBits=0) THEN iTermBits := Constants.gc_uiAnalogTermFullScaleBits;END_IF
+rV := Constants.gc_rAnalogTermFullScaleVolts*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
 
 (* Pressure OK check *)
 // Gauge state
 // Is the gauge plugged in, and within a reasonable range?
 IF i_xGauge_ON THEN
-    IF  (rV >= 0.1 AND rV <=8.7) THEN // as per manual
-        IG.rPRESS := LREAL_TO_REAL(EXPT(10, rV-10));
+    IF  (rV >= Constants.gc_rMKS9xxValidSpanMin AND rV <= Constants.gc_rMKS9xxValidSpanMax) THEN // as per manual
+        IG.rPRESS := LREAL_TO_REAL(EXPT(Constants.gc_rMKS9xxDecadeBase, rV - Constants.gc_rMKS9xxExponentOffset));
         IG.eState := Valid;
         IG.xPRESS_OK := TRUE; //Backwards compatibility
-    ELSIF rV > 8.7 AND rV < 10 THEN
+    ELSIF rV > Constants.gc_rMKS9xxValidSpanMax AND rV < Constants.gc_rMKS9xxOffSpanMax THEN
         IG.rPRESS :=rOffPressure;
         IG.xPRESS_OK := FALSE;
         IG.eState := Off;
