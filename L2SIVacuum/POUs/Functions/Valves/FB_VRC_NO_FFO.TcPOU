@@ -67,14 +67,11 @@ END_IF
 
 
 (* Override logic *)
-(* Goal: give ability to override, but do so in a way that people won't forget it.
-Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
-*)
-
-tonDelOK(IN:=iq_stValve.xCLS_OK, PT:=T#10S);
-rtOK(CLK:=tonDelOK.Q);
-IF rtOK.Q AND iq_stValve.pv_xOvrdCls THEN
+(* This variant repeats the FB_VRC_NO valve body, so it repeats the same override policy: qualification tOvrd,
+   level-triggered safe-condition reset when the close permission has been good for tOvrd, release while the
+   plant-wide override mode is disabled, and duration expiry after tOvrdMaxDuration. *)
+tonDelOK(IN:=iq_stValve.xCLS_OK, PT:=tOvrd);
+IF tonDelOK.Q AND iq_stValve.pv_xOvrdCls THEN
     iq_stValve.pv_xOvrdCls :=FALSE;
     if (iq_stValve.eState=CLOSED) AND (i_xOverrideMode) THEN iq_stValve.pv_xCLS_SW := TRUE; END_IF
     //Log
@@ -83,6 +80,20 @@ END_IF
 
 //Override timer
 tonOvrd(IN:=iq_stValve.pv_xOvrdCls, PT:=tOvrd);
+
+(* Release the retained override request while the plant-wide override mode is disabled *)
+IF NOT i_xOverrideMode THEN
+    iq_stValve.pv_xOvrdCls := FALSE;
+END_IF
+
+(* Duration expiry: clear a manual override that has been active for the configured maximum duration *)
+xOvrdActive := tonOvrd.Q AND i_xOverrideMode;
+tonOvrdMax(IN:=xOvrdActive, PT:=tOvrdMaxDuration);
+IF tonOvrdMax.Q AND iq_stValve.pv_xOvrdCls THEN
+    iq_stValve.pv_xOvrdCls := FALSE;
+    //Log
+    fbLogger(sMsg:='Override expired after configured duration', eSevr:=TcEventSeverity.Warning);
+END_IF
 
 (* Here's where the valve Actuates *)
 q_xCLS_DO := ((iq_stValve.xCLS_OK  AND iq_stValve.pv_xCLS_SW)OR (tonOvrd.Q AND i_xOverrideMode));
