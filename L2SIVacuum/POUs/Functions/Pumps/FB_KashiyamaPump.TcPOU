@@ -1,14 +1,38 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_KashiyamaPump" Id="{c252a3ee-f366-44ed-9d74-8c0f474d15b1}" SpecialFunc="None">
-    <Declaration><![CDATA[(* This function block does basic controls FOR the Kashiyama pump. Turns off pump
-in the event of errors/ warnings. Provides interlocking interface.*)
-FUNCTION_BLOCK FB_KashiyamaPump
+    <Declaration><![CDATA[(*
+    Purpose:
+        Basic controls for the Kashiyama dry pump: run/stop, low speed and reset
+        outputs, the interlock interface and the reported pump state.
+
+    Usage:
+        Call once per scan. Command the pump through q_stPump.pv_xRunSW, read the
+        reported state in q_stPump.eState and acknowledge a latched start timeout
+        with a pulse on q_stPump.xResetSW. Every run command is bounded by
+        i_tStartTimeout: a pump that does not report running through
+        q_stPump.i_xIsRun within that time latches q_stPump.xStartTimeout, records
+        an explicit message in q_stPump.sError and drops the run command, instead
+        of reporting pumpSTARTING indefinitely.
+
+    Objectives:
+        - Bound the wait for the run feedback of every run command.
+        - Report a start that did not complete as a latched, diagnosed fault.
+        - Keep the run command de-energized while the fault is latched.
+
+    History:
+        2026-11-27 Scirix agent (task #201) - bound the wait for q_stPump.i_xIsRun
+                    with i_tStartTimeout and latch an explicit start-timeout fault,
+                    cleared only through q_stPump.xResetSW. The block previously
+                    consumed only TONtmr.ET and stayed in pumpSTARTING forever.
+                    Earlier revisions: see the repository history.
+*)
+FUNCTION_BLOCK FB_KashiyamaPump EXTENDS FB_Pump
 VAR_IN_OUT
 
 END_VAR
 VAR_INPUT
-
+    i_tStartTimeout : TIME := T#20S; //Max time for the pump to report running after the run command
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv:'}
@@ -17,6 +41,9 @@ END_VAR
 VAR
     TONtmr : TON;
     resetTmr : TON;
+    tonStart : TON; //Runs while the pump is commanded to run but has not reported running
+    rtReset : R_TRIG; //Rising edge of the reset switch, used to acknowledge a latched start timeout
+    rtStartTimeout : R_TRIG; //Rising edge of the latched start timeout, used for logging
 
     (* Output *)
     q_xRunDO 	AT%Q*:	BOOL;
@@ -35,11 +62,35 @@ END_VAR
 //Kashiyama Dry pump outputs at high level indicate no warning, no alarm and remotely
 q_stPump.xIlkOK := q_stPump.i_xRemote AND q_stPump.i_xWarningOK AND q_stPump.i_xAlarmOK;
 
-IF q_stPump.xIlkOK THEN
+//Start timeout acknowledge: the latched fault is cleared only by a rising edge of the
+//reset switch and only while the pump is not commanded to run, so dropping the run
+//switch on its own never dismisses the fault.
+rtReset(CLK := q_stPump.xResetSW);
+IF rtReset.Q AND q_stPump.xStartTimeout AND NOT q_stPump.pv_xRunSW THEN
+    q_stPump.xStartTimeout := FALSE;
+    q_stPump.sError := '';
+END_IF
+
+//Run command, inhibited while a start timeout is latched
+IF q_stPump.xIlkOK AND NOT q_stPump.xStartTimeout THEN
     q_stPump.q_xRunDO := q_stPump.pv_xRunSW;
     ELSE
         q_stPump.PV_xRunSW := FALSE;
         q_stPump.q_xRunDO := FALSE;
+END_IF
+
+//Run-confirmation supervision: the run output drives a mechanism, so the wait for the
+//run feedback is bounded. The timer runs while the pump is commanded to run but has not
+//reported running; on expiry the start is counted as a failed command, the run command
+//is de-asserted and an explicit fault is latched for the operator to acknowledge,
+//instead of reporting pumpSTARTING indefinitely.
+tonStart(IN := q_stPump.q_xRunDO AND NOT q_stPump.i_xIsRun, PT := i_tStartTimeout);
+IF tonStart.Q AND NOT q_stPump.xStartTimeout THEN
+    q_stPump.xStartTimeout := TRUE;
+    q_stPump.nStartTimeoutCount := q_stPump.nStartTimeoutCount + 1;
+    q_stPump.sError := 'Pump start timeout: pump did not report running.';
+    q_stPump.pv_xRunSW := FALSE;
+    q_stPump.q_xRunDO := FALSE;
 END_IF
 
 q_stPump.xLspd_IlkENA := q_stPump.q_xRunDO;
@@ -63,7 +114,8 @@ TONtmr (IN := q_stPump.i_xIsRun, PT := T#20S);
 q_stPump.RdyTmr := TO_REAL(TONtmr.PT) - TO_REAL(TONtmr.ET);
 
 (*State evaluation*)
-IF NOT q_stPump.i_xAlarmOK THEN
+//A latched start timeout is a pump fault, so it is reported through eState as well
+IF NOT q_stPump.i_xAlarmOK OR q_stPump.xStartTimeout THEN
     q_stPump.eState := pumpFAULT;
 ELSIF NOT q_stPump.q_xRunDo AND q_stPump.i_xAlarmOK THEN
         q_stPump.eState := pumpSTOPPED;
@@ -73,6 +125,12 @@ ELSIF q_stPump.i_xIsRun THEN
         q_stPump.eState := pumpRUNNING;
 ELSE
     q_stPump.eState := pumpFAULT;
+END_IF
+
+//Log the start timeout once, when it is latched
+rtStartTimeout(CLK := q_stPump.xStartTimeout);
+IF rtStartTimeout.Q THEN
+    fbLogger(sMsg := q_stPump.sError, eSevr := TcEventSeverity.Critical);
 END_IF
 
 //Mapping

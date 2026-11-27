@@ -89,6 +89,26 @@ STRUCT
     LowSP  :   REAL := 0.02; //Torr
     HighSP :   REAL; //Torr
     RdyTmr : REAL;
+
+(* Start/run-confirmation supervision *)
+{attribute 'pytmc' := '
+    pv: START_TMO;
+    field: ZNAM FALSE;
+    field: ONAM TRUE;
+    io: i
+    '}
+    xStartTimeout :   BOOL; //Latched: the pump did not report running within the block's start timeout
+{attribute 'pytmc' := '
+    pv: START_TMO_CNT;
+    io: i
+    '}
+    nStartTimeoutCount : UDINT; //Number of run commands that timed out, counted by the block
+{attribute 'pytmc' := '
+    pv: ErrorMessage;
+    io: i
+    '}
+    sError :   STRING; //Explicit message of the latched fault, empty while no fault is latched
+
 END_STRUCT
 END_TYPE
 ]]></Declaration>
