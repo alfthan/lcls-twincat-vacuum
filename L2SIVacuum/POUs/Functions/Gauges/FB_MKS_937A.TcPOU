@@ -10,7 +10,7 @@ VAR_IN_OUT
 
 END_VAR
 VAR_INPUT
-    PG	:	ST_VG := g_DummyVG; // Gauge Structure used to Interlock the ion gauges
+    PG	:	ST_VG := g_stDummyVG; // Gauge Structure used to Interlock the ion gauges
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv: '}

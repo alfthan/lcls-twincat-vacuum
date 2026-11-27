@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
-  <GVL Name="Global_Variables" Id="{a6c265d3-24f0-4c94-8227-7e6ead61f239}">
+  <GVL Name="Global_Variables_GVL" Id="{a6c265d3-24f0-4c94-8227-7e6ead61f239}">
     <Declaration><![CDATA[VAR_GLOBAL
     g_iSizeOfGGOArray : INT := 50;
 
@@ -8,11 +8,11 @@
         xFirstScan := TRUE
     );
 
-    g_DummyVG	:	ST_VG;
+    g_stDummyVG	:	ST_VG; // Dummy gauge structure used as the default for interlock parameters
 
 
      fbGetCurTaskIdx : GETCURTASKINDEX;
-     TaskInfo:PlcTaskSystemInfo;
+     g_stTaskInfo : PlcTaskSystemInfo; // System information about the current PLC task
 
 
 END_VAR
