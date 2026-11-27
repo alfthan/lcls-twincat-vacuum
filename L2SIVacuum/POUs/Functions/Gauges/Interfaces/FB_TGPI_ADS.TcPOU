@@ -4,6 +4,18 @@
     <Declaration><![CDATA[(* This function block is created for interface devices between different PLC*)
 (* Not all the Variables in the original structure is required, just few signals *)
 (* The variable values are read via ADS using the symbol name*)
+(*
+ Cross-PLC read timeout (conv_158f59a2176f):
+ Every ADS symbol read of the remote gauge is bounded by an explicit timeout, gc_tAdsReadTimeout.
+ The bound is passed to FB_ReadAdsSymByName as tTimeout and is independently enforced by
+ fb_ReadTimeout on the in-flight request, so a stalled or slow transaction never relies on
+ library-default timeout behaviour. An expiry counts as a failed request: bError is set,
+ IG.xPRESS_OK is dropped, bTimeoutError is raised and the event logger records
+ 'ADS Read Timeout'. The bound is shorter than the T#900ms remote heartbeat watchdog so a
+ stalled read reports its own, distinct fault before the counter watchdog trips.
+ History: 2026-11-27 Scirix agent (task #36) - explicit ADS read timeout and timeout fault;
+ tTimeout was previously left unassigned.
+*)
 FUNCTION_BLOCK FB_TGPI_ADS Extends FB_ADS
 VAR_INPUT
     sNetId : String; //NetID of the Destination PLC controller
@@ -14,13 +26,15 @@ END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv:'}
     IG : ST_VG;
-    bError: BOOL;
+    bError: BOOL;          // TRUE while the ADS read failed, timed out, or the remote heartbeat watchdog tripped
+    bTimeoutError : BOOL;  // TRUE while an ADS read transaction has exceeded gc_tAdsReadTimeout (failed request)
 END_VAR
 VAR
     fb_CheckWatchdog: FB_CheckWatchdog;
     fb_Read_VG: FB_ReadAdsSymByName;
     ftReset: F_TRIG;
     xFirstPass: BOOL:= true;
+    fb_ReadTimeout : TON;   // Measures one in-flight ADS read transaction, PT := gc_tAdsReadTimeout
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -38,12 +52,18 @@ fb_Read_VG(
     sVarName:= CONCAT(sVarName,'.PG'),
     nDestAddr:= ADR(IG),
     nLen:= SIZEOF(IG),
-    tTimeout:= ,
+    tTimeout:= gc_tAdsReadTimeout, // explicit bound on one ADS transaction (conv_158f59a2176f), was unassigned
     eComMode:=eAdsComModeFastCom ,
     bBusy=> ,
     bError=> ,
     nErrorId=> );
 
+(* Explicit watchdog on the ADS read transaction itself (conv_158f59a2176f).
+   fb_Read_VG.bBusy is TRUE while the request is outstanding, so a request that is
+   still busy after gc_tAdsReadTimeout is a failed request even when the remote PLC
+   is still feeding its heartbeat counter. *)
+fb_ReadTimeout(IN:= fb_Read_VG.bBusy, PT:= gc_tAdsReadTimeout);
+bTimeoutError := fb_ReadTimeout.Q;
 
 (*Error*)
 fb_CheckWatchdog(
@@ -53,10 +73,10 @@ fb_CheckWatchdog(
     bWatchdog=> ,
     nLastCnt=> );
 
-bError:= fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog;
+bError:= fb_Read_VG.bError OR bTimeoutError OR fb_CheckWatchdog.bWatchdog;
 tErrorPresent(CLK:=bError);
 
-IF (fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog) THEN
+IF bError THEN
 IG.xPRESS_OK := FALSE;
 END_IF;
 
@@ -67,6 +87,7 @@ ACT_Logger();]]></ST>
       <Implementation>
         <ST><![CDATA[IF tErrorPresent.Q THEN
  IF(fb_Read_VG.bError) THEN fbLogger(sMsg:='ADS Read Error', eSevr:=TcEventSeverity.Critical); END_IF;
+ IF(bTimeoutError) THEN fbLogger(sMsg:='ADS Read Timeout: remote gauge ADS read exceeded gc_tAdsReadTimeout', eSevr:=TcEventSeverity.Critical); END_IF;
  IF(fb_CheckWatchdog.bWatchdog) THEN fbLogger(sMsg:='ADS Watchdog Error', eSevr:=TcEventSeverity.Critical); END_IF;
 END_IF
 ]]></ST>

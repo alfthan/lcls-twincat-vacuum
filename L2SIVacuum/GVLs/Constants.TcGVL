@@ -4,6 +4,17 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Explicit bound on one cross-PLC ADS symbol read (conv_158f59a2176f).
+
+       The ADS interface function blocks (FB_TGPI_ADS and friends) pass this value to
+       FB_ReadAdsSymByName as tTimeout and independently enforce it with a TON on the
+       in-flight request. A transaction that exceeds the bound is a failed request: it
+       sets the block error and is logged as an 'ADS Read Timeout'.
+
+       Kept well below the T#900ms remote heartbeat watchdog so that a stalled read is
+       reported as a distinct read timeout before the heartbeat watchdog trips. *)
+    gc_tAdsReadTimeout : TIME := T#500MS;
 END_VAR
 ]]></Declaration>
   </GVL>
