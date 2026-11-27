@@ -76,8 +76,18 @@ STRUCT
     io: io
     '}
     eValveControl : E_VCN_VAT590; //Valve control mode
+    (* Valve status and warning readbacks published to EPICS.
+       The pv name is deliberately left empty: pytmc takes the record prefix
+       from the instance pv on the FB_VCN_VAT590 instance in the machine GVL
+       and the record name from the pv of each ST_VAT590_STATUS member
+       (CTRL_MODE, FATAL_ERR, GEN_STATUS:*, GEN_WARN:*, EXT_WARN:*), every
+       one of which declares io 'i' itself. The io declared here is 'i' too,
+       because this whole structure is a readback. Naming this container
+       would insert an extra path segment and rename every published status
+       PV. *)
     {attribute 'pytmc' := '
     pv:
+    io: i
     '}
     stValveStatus : ST_VAT590_STATUS; //All Valve status readbacks
     {attribute 'pytmc' :=  '
@@ -90,8 +100,14 @@ STRUCT
     io: io
     '}
     bZero : BOOL; //Activate Zero function bit
+    (* CoE interface parameters published to EPICS.
+       The pv of this container ('COE_PARAM') prefixes the pv of each
+       ST_VAT590_COE member (PID_CTRL, SENS_DELAY_AD, RAMP_TIME_*, ...); the io
+       declared here is 'io' because every member is a writable tuning
+       parameter that is also read back. *)
     {attribute 'pytmc' := '
     pv: COE_PARAM
+    io: io
     '}
     stCoeParameters : ST_VAT590_COE; //Coe Parameters
     {attribute 'pytmc' := '
