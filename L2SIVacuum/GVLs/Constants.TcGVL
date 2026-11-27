@@ -4,6 +4,13 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Analog output terminal hardware scaling: the raw count at full scale and the voltage that full scale represents *)
+    gc_iTermBitsAORange      : INT := 32767; // 16 bit unipolar (0...10 V) analog output terminal: raw count at full scale
+    gc_rTermFullScaleVoltage : REAL := 10.0; // Voltage [V] that corresponds to gc_iTermBitsAORange
+
+    (* Valve position engineering range, shared by every position controlled valve *)
+    gc_rValveMaxPosition     : REAL := 100.0; // Valve position at full travel [%]
 END_VAR
 ]]></Declaration>
   </GVL>

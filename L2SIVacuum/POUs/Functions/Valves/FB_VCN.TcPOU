@@ -51,11 +51,13 @@ Closed-loop control
 It could be used for:
 Valve position/flow linearization
 
-Note: Raw position calc is based on 0.5 to 9V span, 32767 bits
+Note: Raw position calc maps the rCloseVoltage..rOpenVoltage span onto the analog
+output terminal's full scale, using gc_iTermBitsAORange and
+gc_rTermFullScaleVoltage from GVL Constants
 *)
 
 
-iq_stVCN.rUpperLimit :=  LIMIT(0, iq_stVCN.rUpperLimit, 100);
+iq_stVCN.rUpperLimit :=  LIMIT(0, iq_stVCN.rUpperLimit, gc_rValveMaxPosition); //The ceiling is a percentage of full travel
 
 // Interlocking
 iq_stVCN.xIlkOK := i_xExtIlkOK;
@@ -69,7 +71,7 @@ IF iq_stVCN.xIlkOK THEN
         iq_stVCN.rReqPosition := LIMIT(0, iq_stVCN.rReqPosition, iq_stVCN.rUpperLimit);
     ELSIF iq_stVCN.eValveControl = PressureControl THEN
         IF (i_xPurge) THEN
-        iq_stVCN.rReqPosition := LIMIT(0, i_ReqPos, 100);
+        iq_stVCN.rReqPosition := LIMIT(0, i_ReqPos, gc_rValveMaxPosition);
         ELSE iq_stVCN.rReqPosition := LIMIT(0, i_ReqPos, iq_stVCN.rUpperLimit);
         END_IF
     END_IF
@@ -79,10 +81,11 @@ ELSE
 END_IF
 
 // Requested Voltage calculation
-rReqVoltage := iq_stVCN.rReqPosition * (rOpenVoltage-rCloseVoltage)/100 + rCloseVoltage;
+rReqVoltage := iq_stVCN.rReqPosition * (rOpenVoltage-rCloseVoltage)/gc_rValveMaxPosition + rCloseVoltage;
 rReqVoltage := LIMIT(rCloseVoltage, rReqVoltage, rOpenVoltage); //The requested voltage should remain within this range
 //Raw position calc
-iq_stvcn.q_iRawPosition := REAL_TO_INT( 32767/10 * rReqVoltage);
+iq_stVCN.q_iRawPosition := REAL_TO_INT( INT_TO_REAL(gc_iTermBitsAORange) / gc_rTermFullScaleVoltage * rReqVoltage);
+iq_stVCN.q_iRawPosition := LIMIT(0, iq_stVCN.q_iRawPosition, gc_iTermBitsAORange); //Never command beyond the terminal's full scale
 
 (*SOft IO Mapping*)
 ACT_IO();
@@ -157,7 +160,7 @@ END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[
-iq_stVCN.rUpperLimit := LIMIT(0, rUpperLimit, 100);]]></ST>
+iq_stVCN.rUpperLimit := LIMIT(0, rUpperLimit, gc_rValveMaxPosition);]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_ValveControl" Id="{cbcd5e0b-59b7-45f1-86d7-5c7278df4f56}">
