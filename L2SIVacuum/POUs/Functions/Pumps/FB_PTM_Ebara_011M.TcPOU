@@ -9,8 +9,8 @@ VAR_IN_OUT
 END_VAR
 VAR_INPUT
     i_rMaxBackingPressure : REAL := 3;
-    i_iMinSpeed : DINT := 100; //check pump manual for setting
-    i_iMaxSpeed : DINT := 560; // check pump manual for setting
+    i_iMinSpeed : DINT := gc_iEbaraSpeedMinHz; //Hz at 0V setpoint, see GVL_EbaraParameters / pump manual P43
+    i_iMaxSpeed : DINT := gc_iEbaraSpeedMaxHz; //Hz at full scale setpoint, see GVL_EbaraParameters / pump manual P43
     i_xExtILKOk : BOOL; // Connect to external interlock logic, TRUE if not used.
 END_VAR
 VAR_OUTPUT
@@ -149,12 +149,12 @@ ACT_Persistent();
     q_xSetSpeed := iq_stPTM.iq_xSpeedSet;
 (*Validate Set Speed within range *)
 IF iq_stPTM.q_iSpeedSet  >= i_iMinSpeed AND iq_stPTM.q_iSpeedSet  <=i_iMaxSpeed THEN
-    q_iSpeedSet  := LIMIT(0, DINT_TO_INT((iq_stPTM.q_iSpeedSet - i_iMinSpeed) / i_iMaxSpeed *16383/5),16383); //Max output 5V
+    q_iSpeedSet  := LIMIT(0, DINT_TO_INT((iq_stPTM.q_iSpeedSet - i_iMinSpeed) / i_iMaxSpeed *gc_iEbaraAdcFullScale/gc_iEbaraAnalogFullVolts),gc_iEbaraAdcFullScale); //Max output gc_iEbaraAnalogFullVolts (5V)
     //:= DINT_TO_INT((iq_stPTM.q_iSpeedSet-100) / 33600 *32767/2); //Max 5V
 END_IF
 
 (* Pump speed calculation *)
-iq_stPTM.i_diCurSpd := LREAL_TO_DINT(560*LREAL_TO_DINT(i_iRawSpeed)/16383);//(560*(INT_TO_REAL(i_iRawSpeed)/16383));// Manual page 28 (DC 0 to 5V -> 100 to 560Hz Rated Rotational Speed )
+iq_stPTM.i_diCurSpd := LREAL_TO_DINT(gc_iEbaraSpeedMaxHz*LREAL_TO_DINT(i_iRawSpeed)/gc_iEbaraAdcFullScale);//(gc_iEbaraSpeedMaxHz*(INT_TO_REAL(i_iRawSpeed)/INT_TO_REAL(gc_iEbaraAdcFullScale)));// Manual page 28 (DC 0 to 5V -> 100 to 560Hz Rated Rotational Speed )
 (*IF i_iRawSpeed / (EXPT(2,i_iADCBits)-1) * 10 >= 0.2 THEN //Speed reading appears zero at ~0.16V
 iq_stPTM.i_diCurSpd := LREAL_TO_DINT(560*LREAL_TO_DINT(i_iRawSpeed)/16383);
 //iq_stPTM.i_diCurSpd := LREAL_TO_DINT(i_iRawSpeed/(EXPT(2,i_iADCBits)-1)*67000);

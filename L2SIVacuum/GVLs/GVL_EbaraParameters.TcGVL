@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="GVL_EbaraParameters" Id="{12466a33-a05b-4920-ab0b-2077c3ba98dc}">
+    <Declaration><![CDATA[(* Hardware scaling and calibration parameters for the Ebara ETC series turbo pump
+   controllers (ETC010M / ETC011M).
+
+   Purpose:  Single source of truth for the analog monitor/setpoint scaling and the
+             rated speed band documented on manual page 28. Hardware changes and range
+             changes are made here instead of in the pump function blocks.
+   Usage:    Referenced by FB_PTM_Ebara_010M and FB_PTM_Ebara_011M (and any future
+             ETC-based turbo pump block) instead of literals in the scaling expressions.
+   Objectives: Keep temperature, current and speed scaling identical across all ETC
+             pump variants and make a hardware/range change a one-line edit.
+   History:  2026-11-27 - Created to remove embedded scaling literals (audit finding 673).
+*)
+VAR_GLOBAL CONSTANT
+    gc_iEbaraAdcFullScale      : INT  := 16383; // Full scale of the ETC analog inputs and setpoint output in ADC counts (0 V -> 0, 5 V -> 16383)
+    gc_iEbaraAnalogFullVolts   : INT  := 5;     // Full scale analog voltage of the ETC monitor inputs and the speed setpoint output in V
+    gc_rEbaraTempMonFullScale  : REAL := 100.0; // Temperature monitor span in degC for gc_iEbaraAnalogFullVolts (0..5 V -> 0..100 degC, manual page 28)
+    gc_rEbaraCurrentMonFullScale : REAL := 10.0; // Motor current monitor span in A for gc_iEbaraAnalogFullVolts (0..5 V -> 0..10 A, manual page 28)
+    gc_iEbaraSpeedMinHz        : DINT := 100;   // Rated rotational speed at 0 V speed setpoint in Hz (check pump manual for setting P43)
+    gc_iEbaraSpeedMaxHz        : DINT := 560;   // Rated rotational speed at gc_iEbaraAnalogFullVolts speed setpoint in Hz (check pump manual for setting P43)
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

@@ -12,8 +12,8 @@ VAR_INPUT
     i_xExtILKOk : BOOL; // Turbo ILK bit , set to True if not used
     //i_iRawSpeed: INT; //Should come from PLC Soft IO.
     i_rMaxBackingPressure : REAL := 3;
-    i_iMinSpeed : DINT := 100; //Hz check pump manual for setting P43
-    i_iMaxSpeed : DINT := 560; //Hz check pump manual for setting P43
+    i_iMinSpeed : DINT := gc_iEbaraSpeedMinHz; //Hz at 0V setpoint, see GVL_EbaraParameters / pump manual P43
+    i_iMaxSpeed : DINT := gc_iEbaraSpeedMaxHz; //Hz at full scale setpoint, see GVL_EbaraParameters / pump manual P43
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -147,9 +147,9 @@ ACT_Persistent();]]></ST>
     iq_stPTM.i_xNCFault :=	i_xNCFault ;
     iq_stPTM.i_xALARM:= NOT i_xNCFault;
     iq_stPTM.i_xAtSpd := i_xAtSpd;
-    iq_stPTM.i_rTempMon := (100*(INT_TO_REAL(i_iTempMon)/16383));// Manual page 28(DC 0 to 5V -> 0 to 100 DegC)
-    iq_stPTM.i_rCurrentMon := (10*(INT_TO_REAL(i_iCurrentMon)/16383));// Manual page 28 (DC 0 to 5V -> 0 to 10 A)
-    iq_stPTM.i_diCurSpd := LREAL_TO_DINT(560*LREAL_TO_DINT(i_iRawSpeed)/16383);//(560*(INT_TO_REAL(i_iRawSpeed)/16383));// Manual page 28 (DC 0 to 5V -> 100 to 560Hz Rated Rotational Speed )
+    iq_stPTM.i_rTempMon := gc_rEbaraTempMonFullScale*(INT_TO_REAL(i_iTempMon)/INT_TO_REAL(gc_iEbaraAdcFullScale));// Manual page 28(DC 0 to 5V -> 0 to 100 DegC)
+    iq_stPTM.i_rCurrentMon := gc_rEbaraCurrentMonFullScale*(INT_TO_REAL(i_iCurrentMon)/INT_TO_REAL(gc_iEbaraAdcFullScale));// Manual page 28 (DC 0 to 5V -> 0 to 10 A)
+    iq_stPTM.i_diCurSpd := LREAL_TO_DINT(gc_iEbaraSpeedMaxHz*LREAL_TO_DINT(i_iRawSpeed)/gc_iEbaraAdcFullScale);//(gc_iEbaraSpeedMaxHz*(INT_TO_REAL(i_iRawSpeed)/INT_TO_REAL(gc_iEbaraAdcFullScale)));// Manual page 28 (DC 0 to 5V -> 100 to 560Hz Rated Rotational Speed )
 (*outputs*)
     q_xStart:= iq_stPTM.q_xStart;
     q_xStop := iq_stPTM.q_xStop;
@@ -160,7 +160,7 @@ ACT_Persistent();]]></ST>
 
 (*Validate Set Speed within range *)
 IF iq_stPTM.q_iSpeedSet  >= i_iMinSpeed AND iq_stPTM.q_iSpeedSet  <=i_iMaxSpeed THEN
-    q_iSpeedSet  := LIMIT(0, DINT_TO_INT((iq_stPTM.q_iSpeedSet - i_iMinSpeed) / i_iMaxSpeed *16383/5),16383); //Max 5V
+    q_iSpeedSet  := LIMIT(0, DINT_TO_INT((iq_stPTM.q_iSpeedSet - i_iMinSpeed) / i_iMaxSpeed *gc_iEbaraAdcFullScale/gc_iEbaraAnalogFullVolts),gc_iEbaraAdcFullScale); //Max output gc_iEbaraAnalogFullVolts (5V)
 END_IF
 
 

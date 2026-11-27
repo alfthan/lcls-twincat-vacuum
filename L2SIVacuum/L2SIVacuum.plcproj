@@ -186,6 +186,9 @@
       <SubType>Code</SubType>
       <LinkAlways>true</LinkAlways>
     </Compile>
+    <Compile Include="GVLs\GVL_EbaraParameters.TcGVL">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="GVLs\GVL_MacroSensorsParameters.TcGVL">
       <SubType>Code</SubType>
     </Compile>
