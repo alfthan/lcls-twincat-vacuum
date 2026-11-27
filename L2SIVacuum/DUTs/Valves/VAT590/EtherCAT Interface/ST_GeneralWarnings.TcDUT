@@ -3,22 +3,22 @@
   <DUT Name="ST_GeneralWarnings" Id="{c4ed2772-b72a-4790-a55d-6868dd39054b}">
     <Declaration><![CDATA[TYPE ST_GeneralWarnings :
 STRUCT
-    Bit0ServiceRequest: BIT;
-    Bit1Reserved : BIT;
-    Bit2Reserved : BIT;
-    Bit3PowerFailureBattery : BIT;
-    Bit4Reserved : BIT;
-    Bit5Reserved : BIT;
-    Bit6Reserved : BIT;
-    Bit7Reserved : BIT;
-    Bit8Reserved : BIT;
-    Bit9Reserved : BIT;
-    Bit10SensMeasUnitFault : BIT;
-    Bit11Reserved : BIT;
-    Bit12Reserved : BIT;
-    Bit13Reserved : BIT;
-    Bit14Reserved : BIT;
-    Bit15Reserved : BIT;
+    Bit0ServiceRequest: BIT;        // TRUE = valve requests service/maintenance; FALSE = no service request
+    Bit1Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit2Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit3PowerFailureBattery : BIT;  // TRUE = power/battery back-up failure, buffered parameters at risk; FALSE = supply OK
+    Bit4Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit5Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit6Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit7Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit8Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit9Reserved : BIT;             // Reserved by VAT, no function assigned, always FALSE
+    Bit10SensMeasUnitFault : BIT;   // TRUE = sensor measurement unit (ADC) fault, readback invalid; FALSE = unit OK
+    Bit11Reserved : BIT;            // Reserved by VAT, no function assigned, always FALSE
+    Bit12Reserved : BIT;            // Reserved by VAT, no function assigned, always FALSE
+    Bit13Reserved : BIT;            // Reserved by VAT, no function assigned, always FALSE
+    Bit14Reserved : BIT;            // Reserved by VAT, no function assigned, always FALSE
+    Bit15Reserved : BIT;            // Reserved by VAT, no function assigned, always FALSE
 END_STRUCT
 END_TYPE
 ]]></Declaration>
