@@ -91,8 +91,9 @@ END_IF
 //Override timer
 tonOvrd(IN:=iq_stValve.pv_xOvrdCls, PT:=tOvrd);
 
-(* Here's where the valve Actuates *)
-q_xCLS_DO := ((iq_stValve.xCLS_OK  AND iq_stValve.pv_xCLS_SW)OR (tonOvrd.Q AND i_xOverrideMode));
+(* Here's where the valve Actuates. The command terms are gated on the latched fault so that an
+active fault de-energizes the close coil instead of leaving the valve commanded closed. *)
+q_xCLS_DO := NOT iq_stValve.bErrorPresent AND ((iq_stValve.xCLS_OK  AND iq_stValve.pv_xCLS_SW)OR (tonOvrd.Q AND i_xOverrideMode));
 iq_stValve.q_xOPN_DO := NOT q_xCLS_DO;
 
 
@@ -108,6 +109,14 @@ END_IF
 IF (iq_stValve.eState=INVALID) THEN
     iq_stValve.bErrorPresent := TRUE;
     //iq_stValve.sErrorMessage := CONCAT(sPath,' Invalid Valve Position');
+END_IF
+
+(* Fault handling: a fault detected in this cycle sets bErrorPresent after the actuation above was
+computed, so force the coil off here as well to de-energize it on the same scan. This valve is
+normally open, so the de-energized coil drives it to the vented (open) state. *)
+IF iq_stValve.bErrorPresent THEN
+    q_xCLS_DO := FALSE;
+    iq_stValve.q_xOPN_DO := NOT q_xCLS_DO;
 END_IF
 
 (*Timers*)
