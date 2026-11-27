@@ -3,6 +3,52 @@
   <DUT Name="ST_PfeifferStatus" Id="{5940fef0-f9c3-48c7-ba29-0570add21519}">
     <Declaration><![CDATA[TYPE ST_PfeifferStatus :
 STRUCT
+(*
+    ST_PfeifferStatus - status block of a Pfeiffer turbo pump on the RS-485 link.
+
+    PURPOSE
+        Carries every status value that FB_PfeifferSerialDriver polls from a
+        Pfeiffer turbo pump controller (TM700 / TC400 / RC400 family), so one
+        struct holds the complete device status used by the pump-supervisory
+        logic, the HMI and the EPICS IOC.
+
+    USAGE
+        Filled by FB_PfeifferSerialDriver.q_stStatus while its polling state
+        machine walks Pfeiffer parameters 010, 023, 027, 303, 305, 306, 307,
+        309, 326, 330, 342, 346, 310, 316 and 708. Consumed by
+        FB_PFEIFFER_TO_PTM and FB_PTM_Pfeiffer.M_Serial_IO, which map the
+        members below onto the generic ST_PfeifferPTM / ST_PTM turbo archetype.
+        Members that carry a pytmc pragma are exported to EPICS as *_RBV
+        records.
+
+    OBJECTIVES
+        - Keep the vendor semantics visible at the point of declaration: the
+          trailing _NNN in each member name is the Pfeiffer parameter number
+          the value is read from, so any member can be traced back to the
+          controller manual without reading the driver.
+        - State per member whether the driver scales the reply. Only parameter
+          310 is scaled (by 1/100); every other numeric member holds the pump's
+          reply unchanged, so nobody re-scales a value that is already
+          converted.
+        - Keep the whole EPICS-facing status surface in one struct so the IOC
+          mapping stays a single declaration.
+
+    HISTORY
+        2025-03-09 / Yann Stephen Mandza
+            Struct introduced when the vacuum serial drivers were merged into
+            the L2SIVacuum library.
+        2026-11-27 / Scirix Agent
+            Added this header and an inline comment for every member. Comment
+            only: no declaration or behaviour change (audit finding #554,
+            convention conv_321640e095c0).
+
+    NOTE
+        The comments describe what FB_PfeifferSerialDriver stores today. Where
+        the driver applies no scaling the member keeps the pump's raw reply,
+        which is stated per member.
+*)
+    /// Pumping-station (pump on/off) status, Pfeiffer parameter 010: TRUE when the pump
+    /// replies '111111', FALSE for '000000'; any other reply is a driver fault.
     {attribute 'pytmc' := '
     pv: PumpingStation_RBV;
     field: ZNAM ILK ACTIVE;
@@ -10,6 +56,9 @@ STRUCT
     io: i;
     '}
     xPumpingStation_010: BOOL;
+    /// Pump-motor status bit, Pfeiffer parameter 023. The driver only assigns it when it
+    /// writes parameter 023, and that write path is not entered today (the motor is enabled
+    /// through parameter 010 on this controller), so the value normally stays FALSE.
     {attribute 'pytmc' := '
     pv: PumpingStation_RBV;
     field: ZNAM FALSE;
@@ -17,26 +66,38 @@ STRUCT
     io: i;
     '}
     xMotorPump_023: BOOL;
+    /// Gas mode (pumping-medium) setting last confirmed by the pump, Pfeiffer parameter
+    /// 027. The driver writes it as a 3-digit string and stores the echo unscaled, so the
+    /// value is a vendor mode code - see the controller manual, not a percentage.
     {attribute 'pytmc' := '
     pv: GasMode_RBV;
     io: i;
     '}
     iGasMode_027: INT;
+    /// Raw status word from Pfeiffer parameter 303 as the pump returned it: '000000' = no
+    /// error or warning, 'Err###' = error with a 3-digit code, 'Wrn###' = warning with a
+    /// 3-digit code. FB_PFEIFFER_TO_PTM derives the pump fault from this string.
     {attribute 'pytmc' := '
     pv: ErrorMessage_RBV;
     io: i;
     '}
     sErrorCode_303: STRING;
+    /// Numeric error code parsed out of sErrorCode_303 ('Err###' -> ###), 0 when the pump
+    /// reports no error. Mapped to ST_PTM.i_iErrorCode (EPICS ErrorCode_RBV).
     {attribute 'pytmc' := '
     pv: ErrorCode_RBV;
     io: i;
     '}
     iErrorCode_303	:	INT;
+    /// Numeric warning code parsed out of sErrorCode_303 ('Wrn###' -> ###), 0 when the
+    /// pump reports no warning. Mapped to ST_PTM.i_iWarningCode (EPICS WarningCode_RBV).
     {attribute 'pytmc' := '
     pv: WarningCode_RBV;
     io: i;
     '}
     iWarningCode_303	:	INT;
+    /// Pump over-temperature message, Pfeiffer parameter 305: TRUE when the pump replies
+    /// '111111', FALSE for '000000'; any other reply is a driver fault.
     {attribute 'pytmc' := '
     pv: ExcessPumpTemp_RBV;
     field: ZNAM FALSE;
@@ -44,6 +105,9 @@ STRUCT
     io: i;
     '}
     xExcessTempPump_305: BOOL;
+    /// Rotation-speed-attained ('at speed') bit, Pfeiffer parameter 306: TRUE when the pump
+    /// replies '111111', i.e. the rotor has reached its speed setpoint. Mapped to
+    /// ST_PTM.i_xAtSpd.
     {attribute 'pytmc' := '
     pv: TotationSpeedAttn_RBV;
     field: ZNAM FALSE;
@@ -51,6 +115,9 @@ STRUCT
     io: i;
     '}
     xRotationSpeedAttn_306: BOOL;
+    /// Pump-accelerating bit, Pfeiffer parameter 307: TRUE while the pump replies '111111',
+    /// i.e. the rotor is still accelerating towards its setpoint. Mapped to
+    /// ST_PTM.i_xAccel.
     {attribute 'pytmc' := '
     pv: PumpAccelerating_RBV;
     field: ZNAM FALSE;
@@ -58,46 +125,67 @@ STRUCT
     io: i;
     '}
     xPumpAccelerating_307: BOOL;
+    /// Actual rotation speed, Pfeiffer parameter 309, in rpm. The driver stores the pump's
+    /// integer reply unchanged (no scaling). Mapped to ST_PTM.i_diCurSpd (EPICS
+    /// PumpSpeed_RBV).
     {attribute 'pytmc' := '
     pv: PumpSpeed_RBV;
     io: i;
     '}
     diActiveRotationSpeed_309: DINT;
+    /// Drive (motor) current, Pfeiffer parameter 310, in A. This is the one status member
+    /// the driver scales: it divides the pump reply by 100. Mapped to ST_PTM.i_rCurrentMon.
     {attribute 'pytmc' := '
     pv: DriveCurrent_RBV;
     io: i;
     '}
     lrDriveCurrent_310: LREAL;
+    /// Drive power, Pfeiffer parameter 316. Stored as the pump's integer reply with no
+    /// scaling, so the unit is whatever the controller reports for this parameter. Mapped
+    /// to ST_PTM.i_diPwr (EPICS PWR_RBV).
     {attribute 'pytmc' := '
     pv: DrivePower_RBV;
     io: i;
     '}
     diDrivePower_316: DINT;
+    /// Electronics temperature, Pfeiffer parameter 326, in degC as reported by the pump (no
+    /// scaling applied). Mapped to ST_PTM.i_diElecTemp (EPICS TempElect_RBV).
     {attribute 'pytmc' := '
     pv: TempElect_RBV;
     io: i;
     '}
     diTempElec_326: DINT;
+    /// Temperature at the bottom of the pump, Pfeiffer parameter 330, in degC as reported by
+    /// the pump (no scaling applied). Mapped to ST_PTM.i_diBtmTemp (EPICS TempPump_RBV).
     {attribute 'pytmc' := '
     pv: TempPump_RBV;
     io: i;
     '}
     diTempPmpBot_330: DINT;
+    /// Bearing temperature, Pfeiffer parameter 342, in degC as reported by the pump (no
+    /// scaling applied). Mapped to ST_PTM.i_diBrngTemp (EPICS TempBearing_RBV).
     {attribute 'pytmc' := '
     pv: TempBearing_RBV;
     io: i;
     '}
     diTempBearng_342: DINT;
+    /// Motor temperature, Pfeiffer parameter 346, in degC as reported by the pump (no
+    /// scaling applied). Mapped to ST_PTM.i_diMtrTemp (EPICS TempMotor_RBV).
     {attribute 'pytmc' := '
     pv: TempMotor_RBV;
     io: i;
     '}
     diTempMotor_346: DINT;
+    /// Power-consumption setting/readback, Pfeiffer parameter 708, in % of the pump's rated
+    /// power (normally 100 %). The driver stores the pump's reply unscaled; 0 commands no
+    /// power. Mapped to ST_PTM.i_uiPowerPctRbk (EPICS Power_RBV).
     {attribute 'pytmc' := '
     pv: Power_RBV;
     io: i;
     '}
     uiPowerPct_708: UINT;
+    /// Serial link timeout: TRUE while the last transaction with the pump timed out (copied
+    /// from FB_PfeifferTransaction.q_xTimeout). Mapped to ST_PTM.xCommTimeout.
     {attribute 'pytmc' := '
     pv: Timeout_RBV;
     field: ZNAM FALSE;
@@ -105,9 +193,19 @@ STRUCT
     io: i;
     '}
     xTimeout: BOOL;
+    /// Rotation-speed setpoint last confirmed by the pump, Pfeiffer parameter 707, in
+    /// hundredths of a percent of nominal speed: the driver multiplies the % setpoint from
+    /// ST_PfeifferControl by 100 before writing, so 100 % reads back as 10000. Only assigned
+    /// on the driver's serial speed-set path.
     iSetRotationSpeed_707 : INT;
+    /// Rotation-speed setting mode last confirmed by the pump, Pfeiffer parameter 026:
+    /// 0 = speed setting mode inactive, 1 = active. The driver writes it as '000'/'001' and
+    /// stores the echo. Only assigned on the driver's serial speed-set path.
     iSetSpdMode_026: INT;
-    xErrorAcknowledged: BOOL; //Not actually read back from the pump, but tells us ErrAck has processed
+    /// Not read back from the pump: set TRUE by the driver once parameter 009 (error
+    /// acknowledge) has been written, and cleared by FB_PFEIFFER_TO_PTM /
+    /// FB_PTM_Pfeiffer.M_Serial_IO when they consume the acknowledgement.
+    xErrorAcknowledged: BOOL;
 END_STRUCT
 END_TYPE
 
