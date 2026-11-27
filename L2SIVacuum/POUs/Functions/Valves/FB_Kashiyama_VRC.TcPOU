@@ -5,6 +5,13 @@
         1. pump is NORMAL operating status, and
         2. chamber pressure is below HighSP or pump is at LowSpeed state.
     it will close if chamber pressure is below than lowSP for 180s.
+
+    The chamber pressure is only trusted when Gauge.xPRESS_OK is TRUE: an invalid
+    or out-of-range gauge reading must never satisfy the open permit.
+
+    History:
+        2026-11-27 - taio-generic-0: Require Gauge.xPRESS_OK before the chamber
+                     pressure may satisfy xOPN_OK (audit finding #696).
 *)
 FUNCTION_BLOCK FB_Kashiyama_VRC
 VAR_IN_OUT
@@ -62,7 +69,13 @@ ELSE
 END_IF
 
 //valve open interlock
-q_stValve.xOPN_OK := Pump.i_xIsRun AND Pump.RdyTmr <= 0.0 AND (Gauge.rPRESS < Pump.HighSP OR Pump.q_xLspdDo) AND i_xExtILK_OK;
+//The chamber pressure part of the permit is only honoured when the gauge reports a
+//valid reading (Gauge.xPRESS_OK). An invalid or out-of-range pressure can otherwise
+//compare low and open the valve. The pump LowSpeed branch does not use the gauge.
+q_stValve.xOPN_OK := Pump.i_xIsRun
+    AND Pump.RdyTmr <= 0.0
+    AND ((Gauge.xPRESS_OK AND Gauge.rPRESS < Pump.HighSP) OR Pump.q_xLspdDo)
+    AND i_xExtILK_OK;
 
 
 (* Override logic *)
