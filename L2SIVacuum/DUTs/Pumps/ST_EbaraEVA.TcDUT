@@ -1,7 +1,37 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_EbaraEVA" Id="{825d9563-9766-45be-b4c4-16a1335c1e21}">
-    <Declaration><![CDATA[TYPE ST_EbaraEVA EXTENDS ST_RoughPump:
+    <Declaration><![CDATA[(*
+ST_EbaraEVA - device interface structure for an Ebara EV-A series dry vacuum pump.
+
+Purpose:
+    Extends the generic ST_RoughPump archetype with the Ebara EV-A specific
+    remote-control, alarm and run-status signals. Every member carries a pytmc
+    pragma and is published to EPICS as the REMOTE, ALARM_OK, RUN_DI and RST_SW
+    records. All members are BOOL logic signals, so they have no engineering
+    units; what matters is their polarity, which is stated inline below.
+
+Usage:
+    Instantiated as stPump inside FB_EbaraEVA, which owns the hardware I/O
+    mapping (ACT_IO) and is the only writer of the q_x* members. Callers read
+    the inherited status members (eState, xErr, xIlkOK) and act on the FB
+    inputs, never on the q_x* members directly.
+
+Objectives:
+    - State the meaning and polarity of every EPICS-exposed field explicitly,
+      so integrators do not have to reverse-engineer ZNAM/ONAM from the wiring.
+    - Keep Ebara EV-A specific signals out of the shared ST_RoughPump
+      archetype; hardware-specific data stays in this extension.
+
+History:
+    2019-03-30  ghalym       Structure created for FB_EbaraEVA.
+    2019-08-16  ghalym       Pragmas rearranged.
+    2020-06-16  ghalym       Issues (#34).
+    2023-11-14  ghalym       Alarm-reset PV (RST_SW) added.
+    2026-11-27  docs pass    Purpose/usage/history header and per-member
+                             meaning/polarity comments added (audit finding #567).
+*)
+TYPE ST_EbaraEVA EXTENDS ST_RoughPump:
 STRUCT
 
 (* Output *)
@@ -15,14 +45,20 @@ STRUCT
     field: ONAM TRUE;
     io: io;
     '}
-    q_xRemote	:	BOOL;
+    q_xRemote	:	BOOL;	//Remote-control select (EPICS REMOTE; declared io so it is also a readback).
+                        //Polarity: TRUE = PLC/EPICS holds remote control of the pump, FALSE = remote
+                        //not asserted and the pump follows its local front panel. FB_EbaraEVA drives it
+                        //from pv_xRunSW while xIlkOK is TRUE, and drops it when the interlock opens.
     {attribute 'pytmc' := '
     pv: ALARM_OK;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: i
     '}
-    i_xAlarmOK	:	BOOL;
+    i_xAlarmOK	:	BOOL;	//Alarm relay input (EPICS ALARM_OK). Fail-safe, normally closed:
+                        //TRUE = alarm loop closed, no alarm, pump may run; FALSE = pump reports an
+                        //alarm (or the alarm loop/cable is open), which FB_EbaraEVA latches as
+                        //pumpFAULT and which clears xIlkOK.
 
     {attribute 'pytmc' := '
     pv: RUN_DI;
@@ -30,7 +66,9 @@ STRUCT
     field: ONAM TRUE;
     io: i
     '}
-    i_xIsRun		:	BOOL;
+    i_xIsRun		:	BOOL;	//Run-status input from the pump controller RUN_DI dry contact (EPICS RUN_DI).
+                        //Polarity: TRUE = pump reports it is running/at speed, FALSE = not running.
+                        //Normally open; FB_EbaraEVA uses it for the pumpSTARTING -> pumpRUNNING transition.
 
 
     {attribute 'pytmc' := '
@@ -39,11 +77,12 @@ STRUCT
     field: ONAM TRUE;
     io: io;
     '}
-    q_xReset	:	BOOL; //For resetting faults
+    q_xReset	:	BOOL;	//For resetting faults. Momentary reset request (EPICS RST_SW):
+                        //TRUE = reset asserted to clear a latched pump fault, FALSE = idle.
+                        //FB_EbaraEVA mirrors it to the q_xResetAlarm hardware output in ACT_IO.
 
 
 END_STRUCT
-END_TYPE
-]]></Declaration>
+END_TYPE]]></Declaration>
   </DUT>
 </TcPlcObject>
