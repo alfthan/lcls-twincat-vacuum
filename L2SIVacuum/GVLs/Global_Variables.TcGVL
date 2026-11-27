@@ -1,9 +1,14 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <GVL Name="Global_Variables" Id="{a6c265d3-24f0-4c94-8227-7e6ead61f239}">
-    <Declaration><![CDATA[VAR_GLOBAL
+    <Declaration><![CDATA[VAR_GLOBAL CONSTANT
+    // Array-size cap of the GGO table, declared as a compile-time constant so that
+    // array bounds and loop limits cannot drift from it at runtime.
+    // Constants.gc_iSizeOfGGOArray holds the same cap; keep the two in step.
     g_iSizeOfGGOArray : INT := 50;
+END_VAR
 
+VAR_GLOBAL
     g_stSystem	:	ST_System(*System_Struct*):= (
         xFirstScan := TRUE
     );
