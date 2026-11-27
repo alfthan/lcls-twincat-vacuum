@@ -70,18 +70,104 @@ VAR
     i_xVetoValveOpenDO AT%I*: BOOL;
     i_xVetoValveClosed AT%I*: BOOL;
 
-    // Interface
+    // Interface (soft IO to FB_VFS_Interface/FB_VFS_2OO3Interface; the
+    // pytmc pv names below mirror ST_VFS/ST_ValveBase so the generated
+    // IOC exposes the same shutter interface for every VFS variant)
     i_xPress_OK AT%I*:BOOL; (*To be linked to the Fast sensor structure signal IG.xPRESS_OK, to make sure that the device is connected*)
+    {attribute 'pytmc' := '
+    pv: OPN_SW;
+    io: i;
+    field: ZNAM CLOSE;
+    field: ONAM OPEN;
+    field: DESC Readback of the EPICS open command;
+    '}
     i_xOPN_SW AT%I*:BOOL;
+    {attribute 'pytmc' := '
+    pv: CLS_SW;
+    io: i;
+    field: ZNAM FALSE;
+    field: ONAM CLOSE;
+    field: DESC Readback of the EPICS close command;
+    '}
     i_xCLS_SW AT%I*:BOOL; (*external open signal e.g epics*)
+    {attribute 'pytmc' := '
+    pv: ALM_RST;
+    io: i;
+    field: DESC Readback of the EPICS alarm reset command;
+    '}
     i_xVAC_FAULT_Reset	AT%I*: BOOL;(*Valve Vacuum OK, is set to False when there is Vacuum Fault*)
+    {attribute 'pytmc' := '
+    pv: OVRD_ON;
+    io: i;
+    field: ZNAM Override OFF;
+    field: ONAM Override ON;
+    field: DESC Readback of the EPICS override mode command;
+    '}
     i_xOverrideMode AT%I*: BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
+    {attribute 'pytmc' := '
+    pv: FORCE_OPN;
+    io: i;
+    field: ZNAM FALSE;
+    field: ONAM FORCE OPEN;
+    field: DESC Readback of the EPICS force-open command;
+    '}
     i_xOverrideOpen AT%I*: BOOL;
+    {attribute 'pytmc' := '
+    pv: TRIG;
+    io: i;
+    field: ZNAM TRIG_OFF;
+    field: ONAM TRIG_ON;
+    field: DESC Fast shutter external trigger state;
+    '}
     q_xTrigger	AT%Q*: BOOL; (*Interface*)
+    {attribute 'pytmc' := '
+    pv: OPN_DI;
+    io: i;
+    field: ZNAM FALSE;
+    field: ONAM OPEN;
+    field: DESC Fast shutter open limit switch readback;
+    '}
     q_xVFS_Open AT%Q*: BOOL; (*Interface*)
+    {attribute 'pytmc' := '
+    pv: CLS_DI;
+    io: i;
+    field: ZNAM FALSE;
+    field: ONAM CLOSE;
+    field: DESC Fast shutter closed limit switch readback;
+    '}
     q_xVFS_Closed AT%Q*: BOOL; (*Interface*)
+    {attribute 'pytmc' := '
+    pv: VAC_FAULT_OK;
+    io: i;
+    field: ZNAM FAULT;
+    field: ONAM FAULT OK;
+    field: DESC Fast shutter vacuum fault status;
+    '}
     q_xVAC_FAULT_OK AT%Q*: BOOL; (*Valve Vacuum OK, is set to False when there is Vacuum Fault*)
+    {attribute 'pytmc' := '
+    pv: MPS_FAULT_OK;
+    io: i;
+    field: ZNAM MPS FAULT;
+    field: ONAM MPS OK;
+    field: DESC Fast shutter MPS fast-fault status;
+    '}
     q_xMPS_OK	 AT%Q*:	BOOL; (*MPS Fault OK, is set when the Valve is Open and there is no trigger*)
+    {attribute 'pytmc' := '
+    pv: STATE;
+    type: mbbi;
+    field: ZRST Vented;
+    field: ONST At Vacuum;
+    field: TWST Differential Pressure;
+    field: THST Lost Vacuum;
+    field: FRST Ext Fault;
+    field: FVST AT Vacuum;
+    field: SXST Triggered;
+    field: SVST Vacuum Fault;
+    field: EIST Close Timeout;
+    field: NIST Open Timeout;
+    io: i;
+    field: DESC Fast shutter state;
+    '}
     q_eVFS_State AT%Q*: E_VGC; (*Interface*)
 
 END_VAR]]></Declaration>
