@@ -182,30 +182,23 @@ IF (SUPER^.bRestorePersistentData) THEN
         IG.xAutoOn := bAutoRecover;
     END_IF;
 END_IF
-(*Check if a new value has been written in the structure variable copy it to the persistent variable*)
-IF NOT (IG.rVAC_SP = rVAC_SP)  THEN
+(*Report a changed tunable against the last-written persistent values, and    *)
+(*commit them to the persistent variables only once the throttle interval has *)
+(*elapsed: continuous setpoint changes must not write the persistent store on *)
+(*every cycle. See FB_GaugeBase.M_PersistWriteDue for the throttle itself.    *)
+IF SUPER^.M_PersistWriteDue(bChanged := NOT (IG.rVAC_SP = rVAC_SP)
+                                       OR NOT (IG.rPRO_SP = rPRO_SP)
+                                       OR NOT (IG.rHYS_PR = rHYS_PR)
+                                       OR NOT bAutoRecoverWrite
+                                       OR NOT (bAutoRecover = IG.xAutoOn)
+                                       OR NOT (bWasOn = (IG.eState >= Valid))) THEN
     rVAC_SP := IG.rVAC_SP;
-END_IF;
-
-IF NOT (IG.rPRO_SP = rPRO_SP) THEN
     rPRO_SP := IG.rPRO_SP;
-END_IF;
-
-IF NOT (IG.rHYS_PR = rHYS_PR) THEN
     rHYS_PR := IG.rHYS_PR;
-END_IF;
-
-IF NOT(bAutoRecoverWrite) OR NOT (bAutoRecover = IG.xAutoOn) THEN
     bAutoRecover := IG.xAutoOn;
     bAutoRecoverWrite := TRUE;
-END_IF;
-
-stateTimer(PT := T#10S);
-IF (stateTimer.Q) THEN
     bWasOn := (IG.eState >= Valid);
-    stateTimer.IN := FALSE;
-    fbWritePersistentData(NETID:='', PORT:=851, START:=TRUE, TMOUT:=T#1s);
-END_IF;]]></ST>
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Action Name="ACT_Recover" Id="{88ffcfa4-6b9d-46a0-a87d-ce9b5497347c}">

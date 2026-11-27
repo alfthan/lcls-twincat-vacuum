@@ -313,32 +313,23 @@ IF (SUPER^.bRestorePersistentData) THEN
         IG_CH2.rHYS_PR := rHYS_PR_CH2;
     END_IF;
 END_IF
-(*Check if a new value has been written in the structure variable copy it to the persistent variable*)
-//CH1
-IF NOT (IG_CH1.rVAC_SP = rVAC_SP_CH1)  THEN
+(*Report changed tunables against the last-written persistent values, and    *)
+(*commit them to the persistent variables only once the throttle interval has *)
+(*elapsed: continuous setpoint changes must not write the persistent store on *)
+(*every cycle. See FB_GaugeBase.M_PersistWriteDue for the throttle itself.    *)
+IF SUPER^.M_PersistWriteDue(bChanged := NOT (IG_CH1.rVAC_SP = rVAC_SP_CH1)
+                                       OR NOT (IG_CH1.rPRO_SP = rPRO_SP_CH1)
+                                       OR NOT (IG_CH1.rHYS_PR = rHYS_PR_CH1)
+                                       OR NOT (IG_CH2.rVAC_SP = rVAC_SP_CH2)
+                                       OR NOT (IG_CH2.rPRO_SP = rPRO_SP_CH2)
+                                       OR NOT (IG_CH2.rHYS_PR = rHYS_PR_CH2)) THEN
     rVAC_SP_CH1 := IG_CH1.rVAC_SP;
-END_IF;
-
-IF NOT (IG_CH1.rPRO_SP = rPRO_SP_CH1) THEN
     rPRO_SP_CH1 := IG_CH1.rPRO_SP;
-END_IF;
-
-IF NOT (IG_CH1.rHYS_PR = rHYS_PR_CH1) THEN
     rHYS_PR_CH1 := IG_CH1.rHYS_PR;
-END_IF;
-
-//CH2
-IF NOT (IG_CH2.rVAC_SP = rVAC_SP_CH2)  THEN
     rVAC_SP_CH2 := IG_CH2.rVAC_SP;
-END_IF;
-
-IF NOT (IG_CH2.rPRO_SP = rPRO_SP_CH2) THEN
     rPRO_SP_CH2 := IG_CH2.rPRO_SP;
-END_IF;
-
-IF NOT (IG_CH2.rHYS_PR = rHYS_PR_CH2) THEN
     rHYS_PR_CH2 := IG_CH2.rHYS_PR;
-END_IF;]]></ST>
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Action Name="IO" Id="{4897bdd3-d08c-4a6b-97a4-93b4dfae5b6f}">

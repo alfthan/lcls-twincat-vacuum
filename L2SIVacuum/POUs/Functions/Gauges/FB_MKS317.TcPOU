@@ -124,11 +124,13 @@ IF (SUPER^.bRestorePersistentData) THEN
         PG.rPRO_SP := rPRO_SP;
     END_IF;
 END_IF
-(*Check if a new value has been written in the structure variable copy it to the persistent variable*)
-IF NOT (PG.rVAC_SP = rVAC_SP) THEN
-    rVAC_SP:= PG.rVAC_SP;
-END_IF;
-]]></ST>
+(*Report a changed tunable against the last-written persistent value, and    *)
+(*commit it to the persistent variable only once the throttle interval has    *)
+(*elapsed: continuous setpoint changes must not write the persistent store on *)
+(*every cycle. See FB_GaugeBase.M_PersistWriteDue for the throttle itself.    *)
+IF SUPER^.M_PersistWriteDue(bChanged := NOT (PG.rVAC_SP = rVAC_SP)) THEN
+    rVAC_SP := PG.rVAC_SP;
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Action Name="IO" Id="{267ed2b0-2e00-403e-b259-b7dc82fa629f}">

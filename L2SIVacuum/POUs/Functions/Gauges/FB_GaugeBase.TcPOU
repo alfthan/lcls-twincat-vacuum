@@ -20,6 +20,11 @@ VAR
     fbGetCurTaskIdx  : GETCURTASKINDEX;
     fbWritePersistentData           : WritePersistentData;
     tRecover: TON;
+    // Persistent tunable write throttle (see M_PersistWriteDue)
+    tPersistWriteThrottle	:	TON;			// Throttle interval timer for persistent writes
+    bPersistThrottleHold	:	BOOL;			// Holds the throttle timer reset for one cycle after a commit
+    bPersistWriteStart		:	BOOL;			// One cycle START pulse for the persistent data writer
+    tPersistWriteInterval	:	TIME := T#10S;	// Minimum interval between two persistent writes
 END_VAR
 VAR PERSISTENT
     rVAC_SP	:	REAL;
@@ -30,5 +35,55 @@ END_VAR
     <Implementation>
       <ST><![CDATA[]]></ST>
     </Implementation>
+    <Method Name="M_PersistWriteDue" Id="{0f4b7c21-5b3e-4a8d-9c62-6d1a8e2f9b34}">
+      <Declaration><![CDATA[METHOD M_PersistWriteDue : BOOL
+(*
+    Persistent tunable write throttle.
+
+    Purpose: keep changed tunables from being copied into the PERSISTENT
+    variables on every cycle. The caller reports bChanged = TRUE while one of
+    its tunable values differs from the value last committed to the persistent
+    variables (the last-written cache); this method then reports TRUE on the
+    single cycle that commit may happen, i.e. only once at least
+    tPersistWriteInterval has elapsed since the previous commit.
+
+    Continuous setpoint changes therefore result in at most one persistent
+    write per tPersistWriteInterval instead of one per change, limiting wear on
+    the persistent store and the data-integrity risk of repeated writes.
+
+    Usage (call once per cycle from ACT_Persistent):
+        IF SUPER^.M_PersistWriteDue(bChanged := <tunable differs from its
+                                                    PERSISTENT copy>) THEN
+            <copy tunables into the PERSISTENT variables>
+        END_IF
+
+    The persistent data writer is driven from here, once per cycle: START is a
+    one-cycle pulse raised on the cycle after a commit, so the newly committed
+    values are already in place when the write starts.
+
+    History: 2026-11-27 - created to add the missing write throttle.
+*)
+VAR_INPUT
+    bChanged : BOOL; // TRUE when a tunable differs from the last-written value
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(*Drive the persistent data writer: START pulses for one cycle per commit*)
+fbWritePersistentData(NETID := '', PORT := 851, START := bPersistWriteStart, TMOUT := T#1s);
+bPersistWriteStart := FALSE;
+
+(*Throttle: a pending change may only be committed once the interval elapsed*)
+tPersistWriteThrottle(IN := bChanged AND NOT bPersistThrottleHold, PT := tPersistWriteInterval);
+M_PersistWriteDue := tPersistWriteThrottle.Q;
+
+(*Hold the timer reset for one cycle so a new change starts a fresh interval*)
+IF M_PersistWriteDue THEN
+    bPersistThrottleHold := TRUE;
+    bPersistWriteStart := TRUE;
+ELSE
+    bPersistThrottleHold := FALSE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
   </POU>
 </TcPlcObject>

@@ -97,9 +97,6 @@ ACT_Persistent();
 
 (*Logger*)
 THIS^.ACT_Logger();
-
-(*Load or save the persistent variables*)
-ACT_Persistent();
 ]]></ST>
     </Implementation>
     <Action Name="ACT_IO" Id="{89c7028d-3190-45b7-aaec-73bdcb00e265}">
@@ -162,18 +159,17 @@ IF (SUPER^.bRestorePersistentData) THEN
         IG.rHYS_PR := rHYS_PR;
     END_IF;
 END_IF
-(*Check if a new value has been written in the structure variable copy it to the persistent variable*)
-IF NOT (IG.rVAC_SP = rVAC_SP)  THEN
+(*Report changed tunables against the last-written persistent values, and    *)
+(*commit them to the persistent variables only once the throttle interval has *)
+(*elapsed: continuous setpoint changes must not write the persistent store on *)
+(*every cycle. See FB_GaugeBase.M_PersistWriteDue for the throttle itself.    *)
+IF SUPER^.M_PersistWriteDue(bChanged := NOT (IG.rVAC_SP = rVAC_SP)
+                                       OR NOT (IG.rPRO_SP = rPRO_SP)
+                                       OR NOT (IG.rHYS_PR = rHYS_PR)) THEN
     rVAC_SP := IG.rVAC_SP;
-END_IF;
-
-IF NOT (IG.rPRO_SP = rPRO_SP) THEN
-    rPRO_SP:= IG.rPRO_SP;
-END_IF;
-
-IF NOT (IG.rHYS_PR = rHYS_PR) THEN
-    rHYS_PR:= IG.rHYS_PR;
-END_IF;]]></ST>
+    rPRO_SP := IG.rPRO_SP;
+    rHYS_PR := IG.rHYS_PR;
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Method Name="M_AutoOn" Id="{6fde0073-91f6-4cb9-bbee-4ff5715804d3}">
