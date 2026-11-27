@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_TQOverride_Test" Id="{9a1c4d38-7e25-4b6f-b6d2-58c2f0a71c9e}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Unit tests for FB_TQOverride.
+A TcUnit test cannot advance wall-clock time, so the qualification and duration
+times are set to zero to stand in for an elapsed time. Each test drives its own
+FB instance through an explicit request-low call first, so the sequence is
+repeatable even if the suite is invoked more than once per cycle.
+2026-11-27 - Created with FB_TQOverride.
+*)
+FUNCTION_BLOCK FB_TQOverride_Test EXTENDS TcUnit.FB_TestSuite
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR
+    fbNoPermit : FB_TQOverride;
+    fbGrant    : FB_TQOverride;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="M_DPIlkOverride" Id="{2b6f0f5c-1d84-4a3e-9c47-6d1f8b2e5a30}">
+      <Declaration><![CDATA[METHOD M_DPIlkOverride
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// The permit is checked continuously: a request alone never grants an override
+TEST('TQOverride_PermitRequired');
+fbNoPermit(i_xRequest := FALSE, i_xPermit := FALSE, i_tQualify := T#0S, i_tDuration := T#1H);
+fbNoPermit(i_xRequest := TRUE,  i_xPermit := FALSE, i_tQualify := T#0S, i_tDuration := T#1H);
+AssertFalse(fbNoPermit.q_xActive, 'DP override granted while the safety permit was not satisfied');
+TEST_FINISHED_NAMED('TQOverride_PermitRequired');
+
+// Request and permit held for the qualification time grant the override
+TEST('TQOverride_GrantedAfterQualification');
+fbGrant(i_xRequest := FALSE, i_xPermit := TRUE, i_tQualify := T#0S, i_tDuration := T#1H);
+fbGrant(i_xRequest := TRUE);
+AssertTrue(fbGrant.q_xActive, 'DP override not granted after request and permit were held for the qualification time');
+TEST_FINISHED_NAMED('TQOverride_GrantedAfterQualification');
+
+// Losing the permit ends the override immediately
+TEST('TQOverride_ClearedOnPermitLoss');
+fbGrant(i_xPermit := FALSE);
+AssertFalse(fbGrant.q_xActive, 'DP override stayed in force after the safety permit was lost');
+TEST_FINISHED_NAMED('TQOverride_ClearedOnPermitLoss');
+
+// A request that stays TRUE does not re-arm the override (never indefinite)
+TEST('TQOverride_NoRearmWhileRequestHeld');
+fbGrant(i_xPermit := TRUE, i_tQualify := T#0S, i_tDuration := T#1H);
+AssertFalse(fbGrant.q_xActive, 'DP override re-armed while the request was still held');
+AssertFalse(fbGrant.q_xPending, 'DP override pending while the request was still held');
+TEST_FINISHED_NAMED('TQOverride_NoRearmWhileRequestHeld');
+
+// A fresh request re-grants, and the override then clears itself when its
+// duration has elapsed
+TEST('TQOverride_AutoClearsAfterDuration');
+fbGrant(i_xRequest := FALSE);
+fbGrant(i_xRequest := TRUE, i_tQualify := T#0S, i_tDuration := T#1H);
+AssertTrue(fbGrant.q_xActive, 'DP override not re-granted from a fresh request');
+fbGrant(i_tDuration := T#0S);
+AssertFalse(fbGrant.q_xActive, 'DP override did not clear itself when its duration elapsed');
+AssertTrue(fbGrant.q_xExpired, 'DP override expiry was not reported');
+TEST_FINISHED_NAMED('TQOverride_AutoClearsAfterDuration');
+]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

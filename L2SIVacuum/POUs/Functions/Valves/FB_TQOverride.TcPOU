@@ -1,0 +1,99 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_TQOverride" Id="{3f9e2d6a-5b4c-4d21-8a7e-1c6b9f0e4a53}" SpecialFunc="None">
+    <Declaration><![CDATA[(* FB_TQOverride - time-qualified, self-clearing manual override.
+
+Purpose:
+    Gate a manual override request so that it can never become a permanent bypass,
+    and so that it can never bypass the safety limit it is meant to relax.
+
+Usage:
+    fbOvrd(i_xRequest  := <operator request>,
+           i_xPermit   := <safety limit satisfied>,
+           i_tQualify  := tQual,
+           i_tDuration := tDur,
+           q_xActive   => xActive,
+           q_xPending  => xPending,
+           q_xExpired  => xExpired);
+
+Behaviour:
+    1. The request must be held, with the safety permit continuously true, for
+       i_tQualify before the override is honored. This protects against blips and
+       accidental single-scan requests.
+    2. A granted override clears itself after i_tDuration, and also immediately
+       when the request is dropped or the permit is lost.
+    3. Once cleared, the override cannot re-arm while the request stays TRUE: the
+       operator must release and re-assert it. A stuck (or scripted) TRUE on the
+       request therefore cannot hold an override on indefinitely.
+    4. The permit is evaluated continuously while the override is active, so the
+       safety limit is always enforced - the override only relaxes the condition
+       the caller chooses to relax.
+
+Objectives:
+    Satisfies the project rule that manual overrides are time-qualified,
+    self-clearing and never a bypass of a safety interlock.
+
+History:
+    2026-11-27 - Created to replace the unqualified differential pressure
+    interlock bypass (i_xDis_DPIlk) of the FB_VGC valve family.
+*)
+FUNCTION_BLOCK FB_TQOverride
+VAR_INPUT
+    i_xRequest  : BOOL;             // Manual override request, held by the caller
+    i_xPermit   : BOOL;             // Safety limit that must stay satisfied; the override never bypasses it
+    i_tQualify  : TIME := T#10S;    // Time request and permit must hold continuously before the override is granted
+    i_tDuration : TIME := T#60S;    // Maximum time a granted override stays in force
+END_VAR
+VAR_OUTPUT
+    q_xActive   : BOOL;             // Override in force (permit satisfied and within its duration)
+    q_xPending  : BOOL;             // Request armed and qualification timer running
+    q_xExpired  : BOOL;             // Last override ended by its duration; held until a new request is made
+END_VAR
+VAR
+    rtRequest   : R_TRIG;           // Detects a fresh (re-)assertion of the request
+    tonQualify  : TON;              // Qualification timer
+    tonDuration : TON;              // Auto-clear timer
+    xArmed      : BOOL;             // Request seen and not yet consumed by a granted override
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* A single rising edge of the request arms exactly one override attempt. A request
+that stays TRUE after the override has expired does not re-arm it, so a stuck or
+scripted request cannot hold the override on forever. *)
+rtRequest(CLK := i_xRequest);
+IF rtRequest.Q THEN
+    xArmed := TRUE;
+    q_xExpired := FALSE;
+END_IF
+
+(* Dropping the request ends the override and disarms the attempt. *)
+IF NOT i_xRequest THEN
+    xArmed := FALSE;
+    q_xActive := FALSE;
+END_IF
+
+(* Losing the permit ends the override immediately. The qualification below then
+has to run again from zero once the permit is back. *)
+IF NOT i_xPermit THEN
+    q_xActive := FALSE;
+END_IF
+
+(* Qualification: request and permit must both hold for i_tQualify. *)
+tonQualify(IN := i_xRequest AND i_xPermit AND xArmed AND NOT q_xActive, PT := i_tQualify);
+q_xPending := i_xRequest AND i_xPermit AND xArmed AND NOT q_xActive AND NOT tonQualify.Q;
+IF tonQualify.Q THEN
+    q_xActive := TRUE;
+    q_xPending := FALSE;
+    xArmed := FALSE; // Request consumed: it must be re-asserted after expiry
+END_IF
+
+(* Self-clearing: a granted override can never stay on longer than i_tDuration. *)
+tonDuration(IN := q_xActive, PT := i_tDuration);
+IF tonDuration.Q THEN
+    q_xActive := FALSE;
+    q_xExpired := TRUE;
+END_IF
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

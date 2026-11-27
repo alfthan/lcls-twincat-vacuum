@@ -15,6 +15,25 @@ STRUCT
     '}
     xDP_OK	:	BOOL;	(* Managed by the VGC function (FB_VGC) *)// Indicates the valve can be opened because the differential pressure is low enough
 
+    (* Differential pressure interlock override (time-qualified, self-clearing) *)
+    {attribute 'pytmc' := '
+    pv: DPILK_OVRD_ON;
+    field: ZNAM Override OFF ;
+    field: ONAM Override ON ;
+    io: i;
+    '}
+    xDPIlkOvrdOn	:	BOOL;	(* Managed by the VGC function (FB_VGC) *)// Indicates the DP interlock override is in force
+    {attribute 'pytmc' := '
+    pv: DPILK_OVRD_PEND;
+    io: i;
+    '}
+    xDPIlkOvrdPend	:	BOOL;	(* Managed by the VGC function (FB_VGC) *)// Indicates a DP interlock override request is qualifying
+    {attribute 'pytmc' := '
+    pv: DPILK_OVRD_EXP;
+    io: i;
+    '}
+    xDPIlkOvrdExp	:	BOOL;	(* Managed by the VGC function (FB_VGC) *)// Indicates the last DP interlock override expired on its own
+
     {attribute 'pytmc' := '
     pv: AT_VAC_SP;
     io: o;

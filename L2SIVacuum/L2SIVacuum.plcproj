@@ -415,6 +415,10 @@
     <Compile Include="POUs\Functions\Valves\FB_VFS_2OO3.TcPOU">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="POUs\Functions\Valves\FB_TQOverride.TcPOU">
+      <SubType>Code</SubType>
+      <LinkAlways>true</LinkAlways>
+    </Compile>
     <Compile Include="POUs\Functions\Valves\FB_VGC_2S.TcPOU">
       <SubType>Code</SubType>
       <LinkAlways>true</LinkAlways>
@@ -577,6 +581,9 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="UnitTests\Pumps\FB_PTM_Test.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="UnitTests\Valves\FB_TQOverride_Test.TcPOU">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="UnitTests\Valves\FB_VGC_Test.TcPOU">

@@ -72,7 +72,7 @@ STRUCT
     field: ONAM OPN ILK OK ;
     io: i;
      '}
-    xOPN_OK	:	BOOL;	(* Final SUM of DP_OK and EXT_OK, needed because it allows the DP ilk to be switched off, see FB_VGC.Dis_DPIlk *)
+    xOPN_OK	:	BOOL;	(* Final SUM of DP_OK and EXT_OK, needed because it allows the DP ilk to be relaxed by a time-qualified override, see FB_VGC.i_xDis_DPIlk *)
 
 (* States *)
 {attribute 'pytmc' := '

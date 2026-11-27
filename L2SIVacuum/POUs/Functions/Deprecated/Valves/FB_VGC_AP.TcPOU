@@ -24,7 +24,7 @@ VAR_INPUT
     {attribute 'pytmc' := '
     pv: Dis_DPIlk
     '}
-    i_xDis_DPIlk : BOOL := FALSE;  (* Set to true when calling the function to disable the differential pressure interlock *)
+    i_xDis_DPIlk : BOOL := FALSE;  (* Override request: it must be held for tDPIlkOvrdQual before the at-vacuum opening condition is relaxed. The override clears itself after tDPIlkOvrdDur and the differential pressure limit is always enforced *)
     {attribute 'pytmc' := '
     pv: EPS_OK
     '}
@@ -83,6 +83,12 @@ VAR
     tDelOK	:	TIME := T#60S;
     tOvrd	:	TIME := T#10s;
 
+    (*Differential pressure interlock override - time-qualified and self-clearing*)
+    fbDPIlkOvrd    : FB_TQOverride;
+    tDPIlkOvrdQual : TIME := T#10S; // i_xDis_DPIlk must be held this long, with the DP limit satisfied, before the override is granted
+    tDPIlkOvrdDur  : TIME := T#60S; // A granted override clears itself after this long
+    tDPIlkOvrdOn   : R_TRIG;        // For logging
+    tDPIlkOvrdExp  : R_TRIG;        // For logging
 
     (* Timeouts*)
     tTimeOutDuration: TIME:= T#30S;
@@ -282,10 +288,21 @@ IF (NOT i_xExt_OK) THEN
     iq_stValve.xERR_ExtFault := TRUE;
 END_IF
 
-// Interlock evaluation - with bypass for DP ILK bypass
+// Interlock evaluation - differential pressure interlock override
 ///////////////////////////////////////////////
-IF i_xDis_DPIlk THEN
-    iq_stValve.xOPN_OK := iq_stValve.xEXT_OK; // AND iq_stValve.xDP_OK ;
+(* The override only relaxes the at-vacuum opening condition; the differential
+pressure limit is always enforced. It is honored only after i_xDis_DPIlk has been
+held, with the DP limit satisfied, for tDPIlkOvrdQual, and it clears itself after
+tDPIlkOvrdDur (or as soon as the request or the DP limit is lost). *)
+fbDPIlkOvrd(i_xRequest  := i_xDis_DPIlk,
+            i_xPermit   := iq_stValve.xDP_OK,
+            i_tQualify  := tDPIlkOvrdQual,
+            i_tDuration := tDPIlkOvrdDur,
+            q_xActive   => iq_stValve.xDPIlkOvrdOn,
+            q_xPending  => iq_stValve.xDPIlkOvrdPend,
+            q_xExpired  => iq_stValve.xDPIlkOvrdExp);
+IF iq_stValve.xDPIlkOvrdOn THEN
+    iq_stValve.xOPN_OK := iq_stValve.xEXT_OK AND iq_stValve.xDP_OK;
 ELSE
     iq_stValve.xOPN_OK := iq_stValve.xEXT_OK AND iq_stValve.xAT_VAC;
 END_IF
@@ -358,6 +375,11 @@ IF tAction.Q THEN fbLogger(sMsg:='Valve commanded open', eSevr:=TcEventSeverity.
 // Log override mode enabled
 tOverrideActivated(CLK:= (tonOvrd.Q AND i_xOverrideMode));
 IF tOverrideActivated.Q THEN fbLogger(sMsg:='Valve override mode activated', eSevr:=TcEventSeverity.Warning); END_IF
+// Log differential pressure interlock override
+tDPIlkOvrdOn(CLK:= iq_stValve.xDPIlkOvrdOn);
+IF tDPIlkOvrdOn.Q THEN fbLogger(sMsg:='Differential pressure interlock override active', eSevr:=TcEventSeverity.Warning); END_IF
+tDPIlkOvrdExp(CLK:= iq_stValve.xDPIlkOvrdExp);
+IF tDPIlkOvrdExp.Q THEN fbLogger(sMsg:='Differential pressure interlock override expired', eSevr:=TcEventSeverity.Warning); END_IF
 
 
 // Alarm reset
