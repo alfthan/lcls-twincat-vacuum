@@ -189,6 +189,9 @@
     <Compile Include="GVLs\GVL_MacroSensorsParameters.TcGVL">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="GVLs\GVL_MKS392Parameters.TcGVL">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="GVLs\GVL_PfeifferParameters.TcGVL">
       <SubType>Code</SubType>
     </Compile>

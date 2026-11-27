@@ -1,7 +1,16 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_MKS392" Id="{afeb32df-f2b5-4c42-9623-5607aedfb59f}" SpecialFunc="None">
-    <Declaration><![CDATA[(* This function block implements the MKS392 gauge*)
+    <Declaration><![CDATA[(* This function block implements the MKS392 gauge.
+   Purpose:  Convert the MKS 392 analog output into a pressure reading and classify
+             that reading into a pressure state.
+   Usage:    Call once per cycle; map the analog input to i_iPRESS_R and use
+             M_SetBits to match the analog terminal's full-scale value.
+   Note:     Every hardware-dependent scaling value and validity limit is a named
+             constant in GVL_MKS392Parameters (gauge voltage span, transfer function
+             slope/offset, terminal full-scale bits and the validity band) - do not
+             reintroduce these values as literals in the logic below.
+*)
 FUNCTION_BLOCK FB_MKS392
 VAR_INPUT
 END_VAR
@@ -13,33 +22,43 @@ VAR_OUTPUT
 END_VAR
 VAR
     rV : REAL;	// input voltage
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iMKS392TermBitsDefault; // The terminal's maximum value in bits
+    xVDisconnected : BOOL; // TRUE when the gauge voltage is below the disconnected threshold
+    xVValidLo : BOOL; // TRUE when the gauge voltage is inside the valid-low pressure band
+    xVValidHi : BOOL; // TRUE when the gauge voltage is inside the valid-high pressure band
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* Real-value calculation *)
-rV := 10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
-PG.rPRESS := (LREAL_TO_REAL(EXPT(10,(2*rV)-11)));
+IF (iTermBits = 0) THEN
+    iTermBits := gc_iMKS392TermBitsDefault; // no divide by zero
+END_IF
+rV := gc_rMKS392VoltageSpan*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
+PG.rPRESS := (LREAL_TO_REAL(EXPT(10,(gc_rMKS392VoltsPerDecade*rV)-gc_rMKS392DecadeOffset)));
 
 
 (* Pressure gauge State checks *)
 
-IF rV >= 0.5 AND rV <= 3.5 THEN
-    PG.eState := ValidLo; //LO
-ELSIF rV > 3.5 AND rV<= 6.5 THEN
-    PG.eState := ValidHi; //HIGH
-ELSIF rV < 0.5 THEN
+xVDisconnected := rV < gc_rMKS392VDisconnected;
+xVValidLo := ((rV >= gc_rMKS392VDisconnected) AND (rV <= gc_rMKS392VValidSplit));
+xVValidHi := ((rV > gc_rMKS392VValidSplit) AND (rV <= gc_rMKS392VMaxValid));
+
+IF xVDisconnected THEN
     PG.eState := GaugeDisconnected; //not on
+ELSIF xVValidLo THEN
+    PG.eState := ValidLo; //LO
+ELSIF xVValidHi THEN
+    PG.eState := ValidHi; //HIGH
 ELSE
     PG.eState := PressInvalid; //other fault - could be no gauge, controller powering up etc
 END_IF
 
 
 
-(* Pressure gauge OK checks *)
-PG.xPRESS_OK := (rV <=6.5 ) AND (rV>=0.5);
+(* Pressure gauge OK checks - reuse the band tests so the state and xPRESS_OK cannot diverge *)
+PG.xPRESS_OK := xVValidLo OR xVValidHi;
 
 
 (* Setpoint evaluation *)

@@ -1,0 +1,27 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="GVL_MKS392Parameters" Id="{6f1d2b7a-3c4e-4a92-9d61-5b8c0e7a4f13}">
+    <Declaration><![CDATA[(* MKS 392 cold-cathode gauge parameters.
+
+   Purpose:  Hold every hardware-dependent scaling value and validity limit used by
+             FB_MKS392 so gauge calibration and terminal resolution can be changed
+             without editing executable logic.
+   Usage:    FB_MKS392 references these constants directly; change a value here to
+             calibrate a different MKS 392 variant or analog input terminal.
+   Transfer function (vendor data): log10(P [Torr]) = 2 * V - 11, for V in volts.
+*)
+VAR_GLOBAL CONSTANT
+    (* Sensor transfer function and terminal scaling *)
+    gc_rMKS392VoltageSpan      : REAL := 10.0;  // Gauge output span in volts at the terminal's full scale
+    gc_rMKS392VoltsPerDecade   : REAL := 2.0;   // Transfer function slope: volts per decade of pressure
+    gc_rMKS392DecadeOffset     : REAL := 11.0;  // Transfer function exponent offset: log10(P/Torr) = 2*V - 11
+    gc_iMKS392TermBitsDefault  : UINT := 32767; // Default terminal full-scale value in bits (16-bit bipolar analog input)
+
+    (* Gauge voltage validity band, in volts *)
+    gc_rMKS392VDisconnected    : REAL := 0.5;   // Below this the gauge is considered disconnected
+    gc_rMKS392VValidSplit      : REAL := 3.5;   // Boundary between the valid-low and valid-high pressure ranges
+    gc_rMKS392VMaxValid        : REAL := 6.5;   // Above this the reading is considered invalid
+END_VAR
+]]></Declaration>
+  </GVL>
+</TcPlcObject>
