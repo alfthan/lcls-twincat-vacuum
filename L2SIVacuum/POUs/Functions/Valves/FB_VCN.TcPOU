@@ -51,7 +51,8 @@ Closed-loop control
 It could be used for:
 Valve position/flow linearization
 
-Note: Raw position calc is based on 0.5 to 9V span, 32767 bits
+Note: Raw position calc is based on the analog output voltage span and full-scale count declared as the
+global constants gc_rAnalogOutSpanVoltage and gc_iAnalogOutFullScale in the Constants GVL
 *)
 
 
@@ -78,11 +79,11 @@ ELSE
     iq_stVCN.eValveControl := CloseValve;
 END_IF
 
-// Requested Voltage calculation
-rReqVoltage := iq_stVCN.rReqPosition * (rOpenVoltage-rCloseVoltage)/100 + rCloseVoltage;
+// Requested Voltage calculation: percent of the valve position span mapped onto the valve voltage span
+rReqVoltage := iq_stVCN.rReqPosition * (rOpenVoltage-rCloseVoltage)/gc_rPositionSpanPercent + rCloseVoltage;
 rReqVoltage := LIMIT(rCloseVoltage, rReqVoltage, rOpenVoltage); //The requested voltage should remain within this range
-//Raw position calc
-iq_stvcn.q_iRawPosition := REAL_TO_INT( 32767/10 * rReqVoltage);
+//Raw position calc: voltage scaled onto the analog output's raw count range
+iq_stVCN.q_iRawPosition := REAL_TO_INT(INT_TO_REAL(gc_iAnalogOutFullScale) / gc_rAnalogOutSpanVoltage * rReqVoltage);
 
 (*SOft IO Mapping*)
 ACT_IO();

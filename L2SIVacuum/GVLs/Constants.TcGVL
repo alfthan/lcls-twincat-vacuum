@@ -4,6 +4,9 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    gc_iAnalogOutFullScale	:	INT := 32767; // Full-scale raw count of the analog output terminals
+    gc_rAnalogOutSpanVoltage	:	REAL := 10.0; // Voltage span [V] that gc_iAnalogOutFullScale corresponds to
+    gc_rPositionSpanPercent	:	REAL := 100.0; // Position span [%] representing a fully open valve
 END_VAR
 ]]></Declaration>
   </GVL>

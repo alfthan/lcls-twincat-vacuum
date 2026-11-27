@@ -44,11 +44,11 @@ ELSE
     iq_stVFN.eValveControl := CloseValve;
 END_IF
 
-// Requested Voltage calculation
-rReqVoltage := iq_stVFN.rReqPosition * (rOpenVoltage-rCloseVoltage)/100 + rCloseVoltage;
+// Requested Voltage calculation: percent of the valve position span mapped onto the valve voltage span
+rReqVoltage := iq_stVFN.rReqPosition * (rOpenVoltage-rCloseVoltage)/gc_rPositionSpanPercent + rCloseVoltage;
 rReqVoltage := LIMIT(rCloseVoltage, rReqVoltage, rOpenVoltage); //The requested voltage should remain within this range
-//Raw position calc
-iq_stVFN.q_iRawPosition := REAL_TO_INT( 32767/10 * rReqVoltage);
+//Raw position calc: voltage scaled onto the analog output's raw count range
+iq_stVFN.q_iRawPosition := REAL_TO_INT(INT_TO_REAL(gc_iAnalogOutFullScale) / gc_rAnalogOutSpanVoltage * rReqVoltage);
 (*IO Mapping*)
 ACT_IO();]]></ST>
     </Implementation>
