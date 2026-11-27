@@ -1,7 +1,44 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_VGC" Id="{0b7dfc27-9760-4c7a-bad2-fa375ac628b8}">
-    <Declaration><![CDATA[TYPE ST_VGC EXTENDS ST_ValveBase:
+    <Declaration><![CDATA[(*
+    ST_VGC - interface structure of one vacuum gate valve (VGC).
+
+    PURPOSE
+        Holds the complete interface of a vacuum gate valve: the EPICS-facing
+        commands and readbacks, the vacuum interlocks, the latched alarm flags
+        and the diagnostic strings. FB_VGC owns the only instance of this
+        structure (iq_stValve) and is its only writer; all other code reads it.
+
+    USAGE
+        Instantiated as iq_stValve in FB_VGC (VAR_OUTPUT) and carried as a
+        VAR_IN_OUT / VAR_OUTPUT member by the valve interface blocks
+        (FB_Valve_Interface, FB_VFS_Interface, FB_TVGC_ADS). Members that carry
+        a pytmc pragma are published to EPICS under the PV named there; members
+        without a pragma are internal diagnostics only. The vacuum setpoints
+        rAT_VAC_SP and rHYST_PERC are autosaved by FB_VGC.ACT_Persistent.
+
+    OBJECTIVES
+        - One structure holds the whole device contract, so the valve can be
+          wired and maintained from this file alone: every member states its
+          meaning and its units.
+        - EXTENDS ST_ValveBase so the fields shared by all valve types (switch,
+          position, override, error, logger) stay in one place and only the
+          VGC-specific fields live here.
+        - The xERR_* flags are latched by FB_VGC and clear only through
+          pv_xAlmRst (FB_VGC.ACT_ResetAlarms), so a transient vacuum fault stays
+          visible until it is acknowledged.
+        - Pressure members are in Torr, the unit of the gauge inputs
+          (ST_VG.rPRESS) and of the AT_VAC_SP / AT_VAC_HYS PVs.
+
+    HISTORY
+        2026-11-27 / scirix agent
+            Added this header and documented every member with its meaning and
+            units (audit finding #574).
+        A. Wallace / 2016-10-29
+            Original FB_VGC / ST_VGC implementation.
+*)
+TYPE ST_VGC EXTENDS ST_ValveBase:
 STRUCT
 
 
@@ -13,7 +50,7 @@ STRUCT
     field: ONAM DP OK ;
     io: i;
     '}
-    xDP_OK	:	BOOL;	(* Managed by the VGC function (FB_VGC) *)// Indicates the valve can be opened because the differential pressure is low enough
+    xDP_OK	:	BOOL;	(* Managed by FB_VGC. TRUE when the pressure difference between the two gauges is below the allowed maximum, i.e. the differential-pressure interlock permits opening. Computed from the gauge pressures, which are in Torr *)
 
     {attribute 'pytmc' := '
     pv: AT_VAC_SP;
@@ -24,8 +61,8 @@ STRUCT
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rAT_VAC_SP	:	REAL := 0.000001;	// Interlock setpoint for gauges on both sides of valve
-    rAT_VAC_SP_LAST	:	REAL :=0.000001 ;	// Interlock setpoint for gauges on both sides of valve
+    rAT_VAC_SP	:	REAL := 0.000001;	(* At-vacuum interlock setpoint for the gauges on both sides of the valve [Torr]; default 1e-6 Torr. Tunable and autosaved *)
+    rAT_VAC_SP_LAST	:	REAL :=0.000001 ;	(* Previous value of rAT_VAC_SP [Torr], used by FB_VGC to detect a setpoint change and recompute rAT_VAC_HYS *)
     {attribute 'pytmc' := '
     pv: AT_VAC_HYS;
     io: o;
@@ -35,13 +72,13 @@ STRUCT
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rAT_VAC_HYS	:	REAL :=0.000001;	// Hysteresis of the vacuum sp
+    rAT_VAC_HYS	:	REAL :=0.000001;	(* At-vacuum hysteresis window [Torr]: both gauges must read below this value for the valve to be considered at vacuum. Recomputed by FB_VGC as rHYST_PERC * rAT_VAC_SP *)
     {attribute 'pytmc' := '
     pv: HYST_PERC ;
     io: o;
     autosave_pass1: VAL DESC
     '}
-    rHYST_PERC	:	REAL := 0.80;	// Hysteresis percentage
+    rHYST_PERC	:	REAL := 0.80;	(* Hysteresis band as a fraction of rAT_VAC_SP [-], range 0.0 .. 1.0; 0.80 = 80 % of the at-vacuum setpoint. Tunable and autosaved *)
 
     {attribute 'pytmc' := '
     pv: AT_VAC ;
@@ -49,7 +86,7 @@ STRUCT
     field: ONAM AT VAC ;
     io: i;
     '}
-    xAT_VAC	:	BOOL;	//At vacuum setpoint
+    xAT_VAC	:	BOOL;	(* At-vacuum interlock status: set by FB_VGC while both gauge pressures are below rAT_VAC_HYS and reset when either rises above rAT_VAC_SP *)
 
 
 (* Alarm Outputs *)
@@ -59,34 +96,34 @@ STRUCT
     field: ONAM Diffrential error present ;
     io: i;
     '}
-    xERR_DifPres		: 	BOOL;
+    xERR_DifPres		: 	BOOL;	(* Latched differential-pressure alarm: TRUE when the difference between the two gauge pressures exceeds the allowed maximum [Torr]. Cleared by pv_xAlmRst *)
     {attribute 'pytmc' := '
     pv: ERR_SP;
     field: ZNAM NO ERROR ;
     field: ONAM Setpoint error present ;
     io: i;
     '}
-    xERR_SP			: 	BOOL;
+    xERR_SP			: 	BOOL;	(* Latched at-vacuum setpoint alarm (loss of vacuum): TRUE when a gauge pressure rises above rAT_VAC_SP [Torr] while the valve is open or in an unknown position. Cleared by pv_xAlmRst *)
     {attribute 'pytmc' := '
     pv: ERR_Ext;
     field: ZNAM NO ERROR ;
     field: ONAM External error present ;
     io: i;
     '}
-    xERR_ExtFault		: 	BOOL;
-    xAlmSum			: 	BOOL;
-    sDevName :STRING;
+    xERR_ExtFault		: 	BOOL;	(* Latched external-interlock alarm: TRUE when the external interlock (ST_ValveBase.xEXT_OK) is lost while the valve is open. Cleared by pv_xAlmRst *)
+    xAlmSum			: 	BOOL;	(* Aggregate alarm summary of this valve: TRUE while any latched xERR_* alarm is active. Not driven by FB_VGC and has no pytmc pragma, so it is not published to EPICS *)
+    sDevName :STRING;	(* Device name of the valve used in diagnostics and in fast-fault messages; copied from the FB_VGC input i_sDevName on the first PLC scan. No units *)
 (*ILK Devices*)
 {attribute 'pytmc' := '
     pv: ILK_DEVICE_US;
     io: i;
     '}
-    sIlkUSDeviceName: STRING;
+    sIlkUSDeviceName: STRING;	(* Path of the upstream (US) gauge device participating in the vacuum interlock, copied from FB_VGC.i_stUSG.sPath. Diagnostic only, no units *)
     {attribute 'pytmc' := '
     pv: ILK_DEVICE_DS;
     io: i;
     '}
-    sIlkDSDeviceName: STRING;
+    sIlkDSDeviceName: STRING;	(* Path of the downstream (DS) gauge device participating in the vacuum interlock, copied from FB_VGC.i_stDSG.sPath. Diagnostic only, no units *)
 
 END_STRUCT
 END_TYPE]]></Declaration>
