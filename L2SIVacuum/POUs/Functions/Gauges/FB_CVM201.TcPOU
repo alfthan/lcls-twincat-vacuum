@@ -40,10 +40,10 @@ END_VAR]]></Declaration>
  it also manages the turn on of the AT_VAC boolean, and checks to make sure the pressure is good *)
 (* For MKS 275 mini-convectron *)
 
-//Default setpoint 50 mT
-IF PG.rVAC_SP = 0 THEN
-    PG.rVAC_SP := 5E-2;
-END_IF
+(* Restore the persisted tunables into the active interface before any default is applied.
+   This runs before the setpoint is used below, so a stored value always wins over the
+   literal default, which is only used when no stored value exists. *)
+ACT_Persistent();
 
 (* Real-value calculation *)
 If (iTermBits=0) THEN iTermBits := 32767;END_IF
@@ -95,10 +95,7 @@ PG.xAT_VAC := PG.xPRESS_OK AND (PG.rPRESS<=PG.rVAC_SP);
 ACT_Logger();
 
 (*Soft IO Mapping *)
-IO();
-
-(*Load or save the persistent variables*)
-ACT_Persistent();]]></ST>
+IO();]]></ST>
     </Implementation>
     <Action Name="ACT_Logger" Id="{7969d63c-632d-445e-9c13-1e5912f29995}">
       <Implementation>
@@ -132,12 +129,22 @@ END_IF
     </Action>
     <Action Name="ACT_Persistent" Id="{78621b25-16e7-4ab1-a07c-31e6e9a8387d}">
       <Implementation>
-        <ST><![CDATA[(*On first PLC pass, load the persistent value into the structrue variable*)
+        <ST><![CDATA[(*On first PLC pass, restore the persisted tunables into the active interface.
+  A stored value always wins over the literal default; the default setpoint is only
+  applied when no stored value exists.*)
 IF (SUPER^.bRestorePersistentData) THEN
     SUPER^.bRestorePersistentData	:= FALSE;
+    (* Restore the persisted setpoints first *)
+    IF (rVAC_SP <> 0) THEN
+        PG.rVAC_SP := rVAC_SP;
+    END_IF
     IF (rPRO_SP <> 0) THEN
         PG.rPRO_SP := rPRO_SP;
-    END_IF;
+    END_IF
+    (* Only when the stored value is genuinely absent, seed the default setpoint *)
+    IF (PG.rVAC_SP = 0) THEN
+        PG.rVAC_SP := rDefaultVAC_SP;
+    END_IF
 END_IF
 (*Check if a new value has been written in the structure variable copy it to the persistent variable*)
 IF NOT (PG.rVAC_SP = rVAC_SP) THEN
