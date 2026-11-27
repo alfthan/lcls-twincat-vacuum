@@ -3,7 +3,10 @@
   <DUT Name="IO_GPI" Id="{87373775-3a0f-40b2-b0b7-2e87924b0b02}">
     <Declaration><![CDATA[TYPE IO_GPI :
 STRUCT
-        i_aPRESS: INT;
+        i_aPRESS: INT; // Raw gauge pressure input from the analog input terminal (EL3174/EP3174):
+                         // signed 16-bit ADC counts, NOT a pressure value. Full scale = +/-32767
+                         // counts = +/-10 V; consumers scale to volts as 10.0 * i_aPRESS / 32767
+                         // and then apply the gauge-specific V -> pressure curve.
 END_STRUCT
 END_TYPE
 ]]></Declaration>
