@@ -50,7 +50,7 @@ END_VAR]]></Declaration>
 IO();
 
 (*Pressure readbacks*)
-rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/32767;
+rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/gc_iTermBitsBipolar10V;
 if (b937A) THEN
     IG.rPRESS := LREAL_TO_REAL(EXPT(10,((rV)/0.6)-12)); //manual page 61 MKS937A
     ELSE

@@ -4,6 +4,18 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Full-scale raw value of the analog input terminal that carries the 0-10 V
+       pressure / current / power signal.  Delegated device FBs use it as the default
+       for their iTermBits and can be retargeted per instance with M_SetBits().
+
+       Vacuum standard architecture: Beckhoff EL3174 (-xxxx) at 10 V, which reports
+       30518 counts at full scale. *)
+    gc_iTermBitsEL3174 : UINT := 30518;
+
+    (* Full-scale raw value of a standard bipolar (+/-10 V) Beckhoff EL30xx/EL31xx
+       analog input terminal (16 bit, 32767 counts at +10 V). *)
+    gc_iTermBitsBipolar10V : UINT := 32767;
 END_VAR
 ]]></Declaration>
   </GVL>

@@ -20,7 +20,7 @@ VAR_OUTPUT
 END_VAR
 VAR
     V : REAL;
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsBipolar10V; // Full-scale raw value of the bipolar 10 V analog input (see gc_iTermBitsBipolar10V); override with M_SetBits()
     Vlowest: REAL := 10;
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
@@ -46,7 +46,7 @@ IF PG.rVAC_SP = 0 THEN
 END_IF
 
 (* Real-value calculation *)
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
+If (iTermBits=0) THEN iTermBits := gc_iTermBitsBipolar10V;END_IF
 V := 10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
 
 Vlowest := MIN(V, Vlowest);

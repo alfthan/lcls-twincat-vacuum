@@ -13,7 +13,7 @@ VAR_OUTPUT
 END_VAR
 VAR
     rV : REAL;	// input voltage
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsBipolar10V; // Full-scale raw value of the bipolar 10 V analog input (see gc_iTermBitsBipolar10V); override with M_SetBits()
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
 END_VAR

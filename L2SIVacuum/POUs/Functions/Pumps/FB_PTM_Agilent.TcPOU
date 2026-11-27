@@ -58,7 +58,7 @@ VAR
    // fbJson : FB_JsonSaxWriter;
    tOverrideActivated : R_TRIG;
 
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsBipolar10V; // Full-scale raw value of the bipolar 10 V analog input (see gc_iTermBitsBipolar10V); override with M_SetBits()
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -336,7 +336,7 @@ iq_stPtm.i_xR2:=	i_xR2;
 iq_stPtm.i_xLSpd:=	i_xLSpd;
 iq_stPtm.i_xFault:=	i_xFault;
 (* Real-value calculation *)
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
+If (iTermBits=0) THEN iTermBits := gc_iTermBitsBipolar10V;END_IF
 iq_stPtm.i_rCurrentMon := (10*INT_TO_REAL(i_iCurrentMon)/iTermBits)*rCurrentScale;
 iq_stPtm.i_rTempMon := 10*INT_TO_REAL(i_iTempMon)/iTermBits;
 iq_stPtm.i_rPowerMon := (10*INT_TO_REAL(i_iPowerMon)/iTermBits)*rPowerScale;

@@ -35,7 +35,7 @@ END_VAR
 (* 5-20-2016, Alex Wallace and Scott Stubbs *)
 (* This function will read the pressure from any gauge on a 937B. *)
 
-rV := 10*INT_TO_REAL(VG.i_iPRESS_R)/32767;
+rV := 10*INT_TO_REAL(VG.i_iPRESS_R)/gc_iTermBitsBipolar10V;
 VG.rPRESS := LREAL_TO_REAL(EXPT(10,(rV-7.2)/0.6));
 
 

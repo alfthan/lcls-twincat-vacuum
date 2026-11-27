@@ -32,7 +32,7 @@ VAR
     rV : REAL;
     GaugeTurnOnTmr : TON;
     tStartupTimer:TON;
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsBipolar10V; // Full-scale raw value of the bipolar 10 V analog input (see gc_iTermBitsBipolar10V); override with M_SetBits()
     (*IOs to be linked*)
     /// Controls and I/Os
     i_iPRESS_R AT %I* :INT; // input Pressure // Link to analog Input
@@ -71,7 +71,7 @@ END_IF
 tStartupTimer(PT:=T#3S);
 
 (* 500 Logarithmic Output Conversion, factory default configuration *)
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
+If (iTermBits=0) THEN iTermBits := gc_iTermBitsBipolar10V;END_IF
 rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
 
 (* Set Guage State based on the Analog voltage*)

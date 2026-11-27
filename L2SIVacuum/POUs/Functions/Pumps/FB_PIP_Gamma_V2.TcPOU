@@ -88,7 +88,7 @@ IF ePrevState <> stPump.eState THEN
         <ST><![CDATA[(*MG*)
 (* convert the analog input into readable pressure*)
 (* use logarithmic Pressure calculation, Output= Normal and Offset = 0*)
-rV := 10*INT_TO_REAL(i_iPress)/32767;
+rV := 10*INT_TO_REAL(i_iPress)/gc_iTermBitsBipolar10V;
 //Manual Page 9
 
 if (stPump.bOutputInverted) THEN

@@ -18,7 +18,7 @@ VAR_INPUT
     i_rMaxPressure	:	REAL;
 END_VAR
 VAR
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsBipolar10V; // Full-scale raw value of the bipolar 10 V analog input (see gc_iTermBitsBipolar10V); override with M_SetBits()
     rMinPressure: REAL;
     rVMin	:	REAL := 0.01; // Anything less than this voltage is considered disconnected
     rVMax :	REAL := 10.5; // Anything more than this is considered invalid
@@ -33,7 +33,7 @@ END_VAR
       <ST><![CDATA[
 
 (* Real-value calculation *)
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
+If (iTermBits=0) THEN iTermBits := gc_iTermBitsBipolar10V;END_IF
 rV := 10*INT_TO_REAL(VG.i_iPRESS_R)/iTermBits;
 
 

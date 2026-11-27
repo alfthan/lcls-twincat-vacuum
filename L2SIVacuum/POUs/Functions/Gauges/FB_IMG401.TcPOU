@@ -28,7 +28,7 @@ VAR
     rV : REAL;
     GaugeTurnOnTmr : TON;
     tStartupTimer:TON;
-    iTermBits: UINT := 30518 ; // The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsEL3174; // Full-scale raw value of the EL3174 10 V analog input (see gc_iTermBitsEL3174); override with M_SetBits()
     (*IOs to be linked*)
     /// Controls and I/Os
     i_iPRESS_R AT %I* :INT; // input Pressure // Link to analog Input
@@ -67,9 +67,9 @@ END_IF
 tStartupTimer(PT:=T#3S);
 
 (* 401 Logarithmic Output Conversion, factory default configuration
-   EL3174, EL3174-xxxx iTermbits 30518, 10V
+   EL3174, EL3174-xxxx, 10 V full scale (iTermBits = gc_iTermBitsEL3174)
 *)
-If (iTermBits=0) THEN iTermBits := 30518;END_IF
+If (iTermBits=0) THEN iTermBits := gc_iTermBitsEL3174;END_IF
 rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
 
 (* Set Guage State based on the Analog voltage*)
