@@ -11,6 +11,7 @@ END_VAR
 VAR_OUTPUT
     q_xDone: BOOL;
     q_xError: BOOL;
+    /// TRUE when the failed transaction did not get a reply within i_tTimeOut
     q_xTimeout: BOOL;
     q_sResult: STRING(255);
     /// Last String Sent to Serial Device - for debugging
@@ -40,6 +41,7 @@ rtExecute(CLK:= i_xExecute);
 IF rtExecute.Q  THEN
     q_xDone	:= FALSE;
     q_xError := FALSE;
+    q_xTimeout := FALSE;  (* new attempt: clear the result of the previous one *)
     q_sResult:= '';
     a_ClearTrans();  (* to provide rising edge for execute *)
     iStep := 10;
@@ -59,6 +61,9 @@ CASE iStep OF
             iStep := 8000;
             a_ClearTrans();
         ELSIF fbtrans.q_xError THEN
+            (* capture the failure kind before a_ClearTrans() restarts the
+               transaction, so the caller can tell a timeout from other errors *)
+            q_xTimeout := fbtrans.q_xTimeout;
             a_ErrorMesg();
             iStep := 9000;
             a_ClearTrans();

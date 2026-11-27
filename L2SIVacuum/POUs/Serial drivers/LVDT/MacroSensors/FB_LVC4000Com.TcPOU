@@ -3,35 +3,86 @@
   <POU Name="FB_LVC4000Com" Id="{0781e15c-c75f-440a-a77c-ba1b843f5b88}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK FB_LVC4000Com
 (*
-A. Wallace 2016-7-20
+    Purpose:
+        Serial interface to the LVC-4000 LVDT signal conditioners on RS-485. The
+        block polls every conditioner on the bus in turn through
+        FB_LVC4000SerialDriver and maps the reply into the ST_SerLVC4000 array.
 
-This FB is used for communicating with the LVC-4000 LVDT signal conditioners on
-RS-485. It is set up for multiple conditioners on one interface.
+    Usage:
+        Pass the array of your LVC4000 structures to the FB, along with your serial
+        RX and TX buffers, and the number of LVC-4000 connected to the bus (which
+        must be less than gcMaxLVC4000). Every poll is bounded by tTimeOut. A poll
+        that fails, or that gets no reply within tTimeOut, latches q_xError (with
+        q_xTimeout set for the timeout case) together with an explicit message in
+        q_sResult, so the outcome is reported to the caller instead of being
+        silently reset.
 
-Usage:
-Pass the array of your LVC4000 structures to the FB, along with your serial RX and TX buffers.
-Also pass the number of LVC-4000 connected to the bus. This must be less than gcMaxLVC4000.
+    Objectives:
+        - Poll all units without blocking the PLC cycle.
+        - Bound every poll by tTimeOut and report an expiry as a failed poll.
+        - Keep the reported fault latched until the caller acknowledges it.
 
+    History:
+        2016-07-20 A. Wallace - initial version.
+        2026-11-27 Scirix agent (task #337) - latch q_xError/q_xTimeout with an
+                    explicit q_sResult message on a driver error or poll timeout;
+                    the block previously only reset the driver and reported nothing.
 *)
 VAR_IN_OUT
+    /// Per-unit readback and configuration data of every LVC-4000 on the bus
     iq_astLVC4000: ARRAY[1..gcMaxLVC4000] OF ST_SerLVC4000;
+    /// One serial driver per LVC-4000; only the unit being polled is executing
     afbLVC4000SerialDriver: ARRAY[1..gcMaxLVC4000] OF FB_LVC4000SerialDriver;
+    /// Serial receive buffer of the RS-485 port
     SerialRXBuffer: ComBuffer;
+    /// Serial transmit buffer of the RS-485 port
     SerialTXBuffer: ComBuffer;
 END_VAR
 VAR_INPUT
-    i_iQty	:	INT := 0;
+    /// Number of LVC-4000 units on the bus, clamped to gcMaxLVC4000
+    i_iQty: INT := 0;
+    /// Rising edge acknowledge: clears the latched q_xError/q_xTimeout
+    i_xAcknowledge: BOOL;
+END_VAR
+VAR_OUTPUT
+    /// Latched fault: set by a driver error or a poll timeout, cleared only by i_xAcknowledge
+    q_xError: BOOL;
+    /// The latched fault is the timeout case: the polled unit did not answer within tTimeOut
+    q_xTimeout: BOOL;
+    /// Explicit message of the latched fault, empty while no fault is latched
+    q_sResult: STRING(255);
 END_VAR
 VAR
+    /// Unit currently being polled
     iUnit: INT := 1;
+    /// Index used to check every unit before an acknowledge is accepted
+    iUnitIdx: INT;
+    /// Maximum wait time for a reply from a unit, propagated to the serial driver
     tTimeOut: TIME := TIME#1s0ms;
-END_VAR]]></Declaration>
+    /// Rising edge of the acknowledge input
+    rtAcknowledge: R_TRIG;
+    /// TRUE while the acknowledge check found a unit that is still failing
+    xAnyUnitFaulted: BOOL;
+    /// Builds the explicit fault message from the unit index and the driver result
+    fbFormatString: FB_FormatString;
+    /// Message of the latched fault when the polled unit did not answer within tTimeOut
+    sTimeoutMesg: STRING(255) := 'LVC4000 unit %d poll timeout: no reply within tTimeOut. %s';
+    /// Message of the latched fault for any other driver failure
+    sErrorMesg: STRING(255) := 'LVC4000 unit %d poll failed: %s';
+END_VAR
+]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This program is called from Serial PTM IO *)
 
 i_iQty := MIN(i_iQty, gcMaxLVC4000);
 
-(* scan the units one at a time *)
+(* keep the poll index inside the configured range if i_iQty was reduced *)
+IF iUnit > i_iQty OR iUnit < 1 THEN
+    iUnit := 1;
+END_IF
+
+(* scan the units one at a time: the driver is re-triggered every scan, so a failed
+   poll is retried after its fault has been reported *)
 afbLVC4000SerialDriver[iUnit](
     i_xExecute:= TRUE,
     i_tTimeOut:= tTimeOut,
@@ -40,17 +91,61 @@ afbLVC4000SerialDriver[iUnit](
     iq_stSerialTXBuffer:=  SerialTXBuffer,
     );
 
+(* Report the poll outcome to the caller (conv_158f59a2176f). A driver error or a
+   poll timeout -- the driver sets q_xTimeout when the unit did not answer within
+   tTimeOut -- latches q_xError with an explicit message instead of only resetting
+   the driver, so the timeout outcome is never silently dropped. q_xTimeout marks
+   the particular timeout case. The first failure is latched; later failures leave
+   the latched message untouched until it is acknowledged. *)
+IF NOT q_xError THEN
+    IF afbLVC4000SerialDriver[iUnit].q_xTimeout THEN
+        q_xError := TRUE;
+        q_xTimeout := TRUE;
+        fbFormatString( sFormat:= sTimeoutMesg,
+            arg1:= F_INT(iUnit),
+            arg2:= F_STRING(afbLVC4000SerialDriver[iUnit].q_sResult),
+            sOut=> q_sResult);
+    ELSIF afbLVC4000SerialDriver[iUnit].q_xError THEN
+        q_xError := TRUE;
+        q_xTimeout := FALSE;
+        fbFormatString( sFormat:= sErrorMesg,
+            arg1:= F_INT(iUnit),
+            arg2:= F_STRING(afbLVC4000SerialDriver[iUnit].q_sResult),
+            sOut=> q_sResult);
+    END_IF
+END_IF
+
 IF afbLVC4000SerialDriver[iUnit].q_xDone
 OR afbLVC4000SerialDriver[iUnit].q_xError
+OR afbLVC4000SerialDriver[iUnit].q_xTimeout
 THEN
         (* reset for next time *)
         afbLVC4000SerialDriver[iUnit]( i_xExecute:= FALSE, iq_stLVC4000:=iq_astLVC4000[iUnit], iq_stSerialRXBuffer:= SerialRXBuffer, iq_stSerialTXBuffer:=  SerialTXBuffer);
-        (* select next pump *)
+        (* select next unit *)
         iUnit := iUnit + 1;
         IF iUnit > i_iQty THEN
             iUnit:= 1;
         END_IF
-END_IF]]></ST>
+END_IF
+
+(* Acknowledge: clears the latched fault, and only while every unit reports no
+   failure (a known-good state). A unit that is still failing is polled again and
+   latches the fault again. *)
+rtAcknowledge(CLK:= i_xAcknowledge);
+IF rtAcknowledge.Q THEN
+    xAnyUnitFaulted := FALSE;
+    FOR iUnitIdx := 1 TO i_iQty DO
+        xAnyUnitFaulted := xAnyUnitFaulted
+            OR afbLVC4000SerialDriver[iUnitIdx].q_xError
+            OR afbLVC4000SerialDriver[iUnitIdx].q_xTimeout;
+    END_FOR
+    IF NOT xAnyUnitFaulted THEN
+        q_xError := FALSE;
+        q_xTimeout := FALSE;
+        q_sResult := '';
+    END_IF
+END_IF
+]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>
