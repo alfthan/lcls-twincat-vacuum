@@ -94,7 +94,7 @@ STRUCT
     xBAKEOUT: BOOL;
 
     //enum for gauge type - will replace iType
-    eTYPE: Gauge_Type := PG907;
+    eTYPE: E_Gauge_Type := PG907;
     //Gauge type, deprecated (default to pirani)
     iTYPE: INT := 2;
     // Index location of the associated Pirani Gauge

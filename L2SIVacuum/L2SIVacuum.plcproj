@@ -34,10 +34,10 @@
     <WriteProductVersion>false</WriteProductVersion>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="DUTs\Gauges\E_PressureState.TcDUT">
+    <Compile Include="DUTs\Gauges\E_Gauge_Type.TcDUT">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="DUTs\Gauges\Gauge_Type.TcDUT">
+    <Compile Include="DUTs\Gauges\E_PressureState.TcDUT">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="DUTs\Gauges\ST_VG.TcDUT">
