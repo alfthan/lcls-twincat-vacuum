@@ -1,7 +1,37 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_VRC_NO" Id="{3c78b61e-192a-4faf-ac1e-61fc63c91393}">
-    <Declaration><![CDATA[TYPE ST_VRC_NO EXTENDS ST_ValveBase:
+    <Declaration><![CDATA[(*
+    Purpose: interface structure of a normally-closed vacuum valve (VRC) as
+    driven by FB_VRC_NO - the VRC variant in which CLOSING, not opening, is
+    the action that must be permitted by an interlock.
+
+    Usage: FB_VRC_NO owns one instance (iq_stValve) and publishes it through a
+    pytmc pragma, so every member below becomes a PV. The struct extends
+    ST_ValveBase, which keeps the open-side members (pv_xOPN_SW, pv_xOvrdOpn,
+    q_xOPN_DO), the global override flag xOverrideMode and the shared status
+    members (eState, i_xOpnLS, i_xClsLS, bErrorPresent, ...); this DUT only adds
+    the close-side permit/request/command triple. FB_VRC_NO drives the single
+    physical solenoid from q_xCLS_DO (through its AT %Q* mirror) and derives
+    q_xOPN_DO as its inverse, so consumers must not write either output.
+
+    Polarity: every xCLS_* / pv_xCLS_SW member is TRUE = closed, FALSE = open,
+    matching the ONAM/ZNAM fields of its pytmc pragma.
+
+    Objectives:
+      - Keep the close-permit, close-request, close-command and time-qualified
+        override signals distinguishable from the type definition alone.
+      - State the polarity once, so no consumer has to guess it.
+      - Record that none of the added members carries an engineering unit: all
+        four are BOOL states or requests, not scaled measurements.
+
+    History:
+      2026-11-27  Header block and per-member comments added; type name,
+                  inheritance, defaults and pytmc pragmas unchanged (audit
+                  finding #577, task #105). Author: PLC audit agent
+                  (taio-generic-0).
+*)
+TYPE ST_VRC_NO EXTENDS ST_ValveBase:
 STRUCT
 (* Readbacks *)
     //In case VRC is normally open
@@ -11,14 +41,20 @@ STRUCT
     field: ZNAM FALSE;
     io: i;
     '}
-    xCLS_OK : BOOL := TRUE;
+    xCLS_OK : BOOL := TRUE; (* TRUE = closing is permitted: FB_VRC_NO copies
+    the external close interlock (i_xExtILK_OK) here, and FALSE blocks and
+    drops a close request. No units (BOOL). *)
     {attribute 'pytmc' := '
     pv: CLS_SW ;
     field: ONAM CLOSE;
     field: ZNAM OPEN;
     io: io ;
     '}
-    pv_xCLS_SW	: BOOL;
+    pv_xCLS_SW	: BOOL; (* Close request from the operator (PV CLS_SW): TRUE
+    asks for the valve closed, FALSE asks for it open. FB_VRC_NO forces it
+    FALSE on the first scan and while xCLS_OK is FALSE with no active
+    override, then re-asserts it when an override expires with the valve
+    closed in override mode: a request, not a latched command. No units. *)
 
     {attribute 'pytmc' := '
     pv: CLS_DO ;
@@ -26,14 +62,22 @@ STRUCT
     field: ZNAM OPEN;
     io: io ;
     '}
-    q_xCLS_DO	: BOOL;
+    q_xCLS_DO	: BOOL; (* Close output as commanded to the valve (PV CLS_DO):
+    TRUE = energise to close, FALSE = de-energise to open. This is the
+    command that was issued, not a position feedback - read eState for the
+    actual position. No units. *)
     {attribute 'pytmc' := '
     pv: FORCE_CLS;
     field: ONAM FORCE CLOSE;
     field: ZNAM FALSE;
     io: io;
     '}
-    pv_xOvrdCls	:	BOOL;
+    pv_xOvrdCls	:	BOOL; (* Time-qualified override of the close interlock
+    (PV FORCE_CLS): TRUE requests a close even though xCLS_OK is FALSE. It
+    is honoured only while the global override input i_xOverrideMode is
+    TRUE and only for tOvrd (10 s) in FB_VRC_NO, after which the interlocked
+    behaviour returns; the flag self-clears once xCLS_OK has been true for
+    10 s, logging 'Override expired'. No units. *)
 
 END_STRUCT
 END_TYPE]]></Declaration>
