@@ -3,6 +3,11 @@
   <POU Name="FB_VFS_Interface" Id="{57bc9317-df03-4829-82d4-3e35e70264fe}" SpecialFunc="None">
     <Declaration><![CDATA[(*Used as soft IO mapping to create a psuedo valve to communicate over two task on the same PLC.*)
 (*for FAST shutter control*)
+(* The EPICS command word (OPN_SW, ALM_RST, FORCE_OPN) is an external value and is routed through
+   the common sanitizer: a self-inconsistent command word (open and close, or force-open and
+   close, asserted together) is rejected, the last trusted commands are held and
+   iq_stValve.xCMD_VALID reports whether the current command word was accepted.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #1035). *)
 FUNCTION_BLOCK FB_VFS_Interface EXTENDS FB_Valve
 VAR_INPUT
     IG : ST_VG; // The MKS422 Cold Cathode Data Structure
@@ -24,6 +29,10 @@ VAR
     tonDelOK : TON;
     xOPN_OK : BOOL;
     tDelOK	:	TIME := T#60S;
+    xCmdValid : BOOL; // TRUE when the EPICS command word is self-consistent
+    fbOpnSwSanitizer : FB_BoolSanitizer; // sanitizes the EPICS open command
+    fbAlmRstSanitizer : FB_BoolSanitizer; // sanitizes the EPICS alarm reset command
+    fbOvrdOpnSanitizer : FB_BoolSanitizer; // sanitizes the EPICS force-open command
 
     (*outputs*)
     q_xPRESS_OK AT%Q*: BOOL;
@@ -144,11 +153,19 @@ iq_stValve.i_xClsLS:=	i_xVFS_Closed;
 iq_stValve.eVGC_State := i_eVFS_State;
 iq_stValve.i_xVAC_FAULT_OK:= i_xVAC_FAULT_OK;
 (*output*)
-q_xOPN_SW := iq_stValve.pv_xOPN_SW;
-q_xCLS_SW:= iq_stValve.xCLS_SW;
-q_xVAC_FAULT_Reset :=  iq_stValve.pv_xAlmRst;
+(* the EPICS command word is external data: reject a self-inconsistent word and hold the last
+   trusted commands until a consistent word arrives *)
+xCmdValid := NOT ((iq_stValve.pv_xOPN_SW AND iq_stValve.xCLS_SW) OR (iq_stValve.pv_xOvrdOpn AND iq_stValve.xCLS_SW));
+fbOpnSwSanitizer(i_xValue := iq_stValve.pv_xOPN_SW, i_xSourceValid := xCmdValid, i_xSafeValue := FALSE, i_sName := 'VFS OPN_SW');
+fbAlmRstSanitizer(i_xValue := iq_stValve.pv_xAlmRst, i_xSourceValid := xCmdValid, i_xSafeValue := FALSE, i_sName := 'VFS ALM_RST');
+fbOvrdOpnSanitizer(i_xValue := iq_stValve.pv_xOvrdOpn, i_xSourceValid := xCmdValid, i_xSafeValue := FALSE, i_sName := 'VFS FORCE_OPN');
+iq_stValve.xCMD_VALID := xCmdValid;
+
+q_xOPN_SW := fbOpnSwSanitizer.q_xValue;
+q_xCLS_SW:= iq_stValve.xCLS_SW AND xCmdValid; // closing is the fail-safe action: an inconsistent word never commands it
+q_xVAC_FAULT_Reset :=  fbAlmRstSanitizer.q_xValue;
 q_xOverrideMode :=iq_stValve.xOverrideMode;
-q_xOverrideOpen := iq_stValve.pv_xOvrdOpn ;
+q_xOverrideOpen := fbOvrdOpnSanitizer.q_xValue ;
 iq_stValve.sGFS := IG.sPath;
 
 (*update values*)

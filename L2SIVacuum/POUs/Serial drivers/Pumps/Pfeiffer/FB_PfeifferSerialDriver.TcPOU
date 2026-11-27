@@ -1,7 +1,14 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PfeifferSerialDriver" Id="{ae4993b2-9a7a-48a9-a98a-cb5b06b3f43a}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_PfeifferSerialDriver
+    <Declaration><![CDATA[(* Serial driver for the Pfeiffer RC400 pump controller.
+   Every numeric field of a device reply is external data: it is format-checked by
+   F_SanitizeDecimal, then range-checked and last-trusted-held by FB_ValueSanitizer before it is
+   published in q_stStatus. A truncated, empty or garbled field therefore keeps the previous
+   trusted value instead of being published as a plausible 0, and the matching validity flag in
+   q_stStatus (xGasModeValid, xSpeedValid, xTempValid, xPowerValid) reports the held state.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #1239). *)
+FUNCTION_BLOCK FB_PfeifferSerialDriver
 VAR_INPUT
     /// rising edge execute
     i_xExecute: BOOL;
@@ -31,6 +38,38 @@ VAR
     fbPfeifferTransaction: FB_PfeifferTransaction;
     fbFormatString: FB_FormatString;
     diOldSetRotationSpeed_707 :DINT;
+
+    (* sanitizers for the parsed reply fields - a raw reply field is never converted directly *)
+    fbGasMode : FB_ValueSanitizer; // gas mode 027
+    fbSpeed : FB_ValueSanitizer; // active rotation speed 309
+    fbTempElec : FB_ValueSanitizer; // electronics temperature 326
+    fbTempPmpBot : FB_ValueSanitizer; // pump bottom temperature 330
+    fbTempBearng : FB_ValueSanitizer; // bearing temperature 342
+    fbTempMotor : FB_ValueSanitizer; // motor temperature 346
+    fbDriveCurrent : FB_ValueSanitizer; // drive current 310
+    fbDrivePower : FB_ValueSanitizer; // drive power 316
+    fbPowerPct : FB_ValueSanitizer; // power consumption 708
+    fbErrorCode : FB_ValueSanitizer; // error / warning number 303
+    lrParsed : LREAL; // value parsed by F_SanitizeDecimal for the current step
+    bParsed : BOOL; // TRUE when the current reply field had a valid numeric format
+    xTempValidThisPoll : BOOL; // accumulation of the temperature replies of the current poll
+    xPowerValidThisPoll : BOOL; // accumulation of the drive/power replies of the current poll
+END_VAR
+VAR CONSTANT
+    c_lrGasModeMin : LREAL := 0.0; // gas mode 027 lowest valid value
+    c_lrGasModeMax : LREAL := 2.0; // gas mode 027 highest valid value
+    c_lrSpeedMin : LREAL := 0.0; // active rotation speed 309 lowest valid value in rpm
+    c_lrSpeedMax : LREAL := 100000.0; // active rotation speed 309 highest valid value in rpm
+    c_lrTempMin : LREAL := -50.0; // temperatures 326/330/342/346 lowest valid value in degC
+    c_lrTempMax : LREAL := 200.0; // temperatures 326/330/342/346 highest valid value in degC
+    c_lrCurrentMin : LREAL := 0.0; // drive current 310 lowest valid value in A
+    c_lrCurrentMax : LREAL := 100.0; // drive current 310 highest valid value in A
+    c_lrPowerMin : LREAL := 0.0; // drive power 316 lowest valid value in W
+    c_lrPowerMax : LREAL := 10000.0; // drive power 316 highest valid value in W
+    c_lrPowerPctMin : LREAL := 0.0; // power consumption 708 lowest valid value in percent
+    c_lrPowerPctMax : LREAL := 100.0; // power consumption 708 highest valid value in percent
+    c_lrErrorCodeMin : LREAL := 0.0; // error / warning number 303 lowest valid value
+    c_lrErrorCodeMax : LREAL := 999.0; // error / warning number 303 highest valid value
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with a Pfeiffer RC400 Pump controller *)
@@ -45,6 +84,10 @@ IF rtExecute.Q  THEN
     q_xDone	:= FALSE;
     q_xError := FALSE;
     q_sResult:= '';
+    (* start a new poll: the per-poll validity accumulators begin optimistic and each parsed
+       field marks itself invalid when its reply is rejected *)
+    xTempValidThisPoll := TRUE;
+    xPowerValidThisPoll := TRUE;
     IF  i_stControl.xEnableComm THEN
         a_ClearTrans();  (* to provide rising edge for execute *)
         iStep := 10;
@@ -90,7 +133,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 20 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.iGasMode_027 := STRING_TO_INT( fbPfeifferTransaction.q_sResponseData);
+            (* validate the digit field and the allowed gas mode range before publishing *)
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := FALSE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbGasMode(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrGasModeMin,
+                i_lrMax := c_lrGasModeMax,
+                i_sName := 'Pfeiffer gas mode 027');
+            q_stStatus.iGasMode_027 := LREAL_TO_INT(fbGasMode.q_lrValue);
+            q_stStatus.xGasModeValid := fbGasMode.q_xValid;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := iStep + 10;
         END_IF
@@ -107,10 +163,32 @@ CASE iStep OF
         ELSIF fbPfeifferTransaction.q_xDone THEN
             q_stStatus.sErrorCode_303 := fbPfeifferTransaction.q_sResponseData;
             IF LEFT(q_stStatus.sErrorCode_303, 3) = 'Err' THEN
-                q_stStatus.iErrorCode_303 := STRING_TO_INT(	RIGHT(q_stStatus.sErrorCode_303, 3) );
+                bParsed := F_SanitizeDecimal(
+                    i_sInput := RIGHT(q_stStatus.sErrorCode_303, 3),
+                    i_xAllowSign := FALSE,
+                    i_xAllowDecimalPoint := FALSE,
+                    q_lrValue => lrParsed);
+                fbErrorCode(
+                    i_lrValue := lrParsed,
+                    i_xSourceValid := bParsed,
+                    i_lrMin := c_lrErrorCodeMin,
+                    i_lrMax := c_lrErrorCodeMax,
+                    i_sName := 'Pfeiffer error code 303');
+                q_stStatus.iErrorCode_303 := LREAL_TO_INT(fbErrorCode.q_lrValue);
                 q_stStatus.iWarningCode_303 := 0;
             ELSIF LEFT(q_stStatus.sErrorCode_303, 3) = 'Wrn' THEN
-                q_stStatus.iWarningCode_303 := STRING_TO_INT(	RIGHT(q_stStatus.sErrorCode_303, 3) );
+                bParsed := F_SanitizeDecimal(
+                    i_sInput := RIGHT(q_stStatus.sErrorCode_303, 3),
+                    i_xAllowSign := FALSE,
+                    i_xAllowDecimalPoint := FALSE,
+                    q_lrValue => lrParsed);
+                fbErrorCode(
+                    i_lrValue := lrParsed,
+                    i_xSourceValid := bParsed,
+                    i_lrMin := c_lrErrorCodeMin,
+                    i_lrMax := c_lrErrorCodeMax,
+                    i_sName := 'Pfeiffer warning code 303');
+                q_stStatus.iWarningCode_303 := LREAL_TO_INT(fbErrorCode.q_lrValue);
                 q_stStatus.iErrorCode_303 := 0;
             ELSIF q_stStatus.sErrorCode_303 = '000000' THEN
                 q_stStatus.iErrorCode_303 := q_stStatus.iWarningCode_303 := 0;
@@ -190,7 +268,19 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 70 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.diActiveRotationSpeed_309 := STRING_TO_DINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := FALSE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbSpeed(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrSpeedMin,
+                i_lrMax := c_lrSpeedMax,
+                i_sName := 'Pfeiffer rotation speed 309');
+            q_stStatus.diActiveRotationSpeed_309 := LREAL_TO_DINT(fbSpeed.q_lrValue);
+            q_stStatus.xSpeedValid := fbSpeed.q_xValid;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := iStep + 1;
         END_IF
@@ -205,7 +295,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 71 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.diTempElec_326 := STRING_TO_DINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := TRUE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbTempElec(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrTempMin,
+                i_lrMax := c_lrTempMax,
+                i_sName := 'Pfeiffer temperature 326');
+            q_stStatus.diTempElec_326 := LREAL_TO_DINT(fbTempElec.q_lrValue);
+            xTempValidThisPoll := xTempValidThisPoll AND fbTempElec.q_xValid;
+            q_stStatus.xTempValid := xTempValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := iStep + 1;
         END_IF
@@ -220,7 +323,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 72 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.diTempPmpBot_330 := STRING_TO_DINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := TRUE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbTempPmpBot(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrTempMin,
+                i_lrMax := c_lrTempMax,
+                i_sName := 'Pfeiffer temperature 330');
+            q_stStatus.diTempPmpBot_330 := LREAL_TO_DINT(fbTempPmpBot.q_lrValue);
+            xTempValidThisPoll := xTempValidThisPoll AND fbTempPmpBot.q_xValid;
+            q_stStatus.xTempValid := xTempValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := iStep + 1;
         END_IF
@@ -235,7 +351,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 73 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.diTempBearng_342 := STRING_TO_DINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := TRUE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbTempBearng(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrTempMin,
+                i_lrMax := c_lrTempMax,
+                i_sName := 'Pfeiffer temperature 342');
+            q_stStatus.diTempBearng_342 := LREAL_TO_DINT(fbTempBearng.q_lrValue);
+            xTempValidThisPoll := xTempValidThisPoll AND fbTempBearng.q_xValid;
+            q_stStatus.xTempValid := xTempValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := iStep + 1;
         END_IF
@@ -251,7 +380,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 74 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.diTempMotor_346 := STRING_TO_DINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := TRUE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbTempMotor(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrTempMin,
+                i_lrMax := c_lrTempMax,
+                i_sName := 'Pfeiffer temperature 346');
+            q_stStatus.diTempMotor_346 := LREAL_TO_DINT(fbTempMotor.q_lrValue);
+            xTempValidThisPoll := xTempValidThisPoll AND fbTempMotor.q_xValid;
+            q_stStatus.xTempValid := xTempValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := 80;
         END_IF
@@ -266,7 +408,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 80 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.lrDriveCurrent_310 := STRING_TO_LREAL( fbPfeifferTransaction.q_sResponseData)/100.0;
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := FALSE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbDriveCurrent(
+                i_lrValue := lrParsed/100.0,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrCurrentMin,
+                i_lrMax := c_lrCurrentMax,
+                i_sName := 'Pfeiffer drive current 310');
+            q_stStatus.lrDriveCurrent_310 := fbDriveCurrent.q_lrValue;
+            xPowerValidThisPoll := xPowerValidThisPoll AND fbDriveCurrent.q_xValid;
+            q_stStatus.xPowerValid := xPowerValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := iStep + 10;
         END_IF
@@ -281,7 +436,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 90 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.diDrivePower_316 := STRING_TO_DINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := FALSE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbDrivePower(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrPowerMin,
+                i_lrMax := c_lrPowerMax,
+                i_sName := 'Pfeiffer drive power 316');
+            q_stStatus.diDrivePower_316 := LREAL_TO_DINT(fbDrivePower.q_lrValue);
+            xPowerValidThisPoll := xPowerValidThisPoll AND fbDrivePower.q_xValid;
+            q_stStatus.xPowerValid := xPowerValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := 91;
         END_IF
@@ -296,7 +464,20 @@ CASE iStep OF
             q_sResult := CONCAT('in Step 91 fbPfeifferTransaction failed with message: ', fbPfeifferTransaction.q_sResult);
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
-            q_stStatus.uiPowerPct_708 := STRING_TO_UINT( fbPfeifferTransaction.q_sResponseData);
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbPfeifferTransaction.q_sResponseData,
+                i_xAllowSign := FALSE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbPowerPct(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := c_lrPowerPctMin,
+                i_lrMax := c_lrPowerPctMax,
+                i_sName := 'Pfeiffer power consumption 708');
+            q_stStatus.uiPowerPct_708 := LREAL_TO_UINT(fbPowerPct.q_lrValue);
+            xPowerValidThisPoll := xPowerValidThisPoll AND fbPowerPct.q_xValid;
+            q_stStatus.xPowerValid := xPowerValidThisPoll;
             a_ClearTrans();  (* to provide rising edge for execute *)
             iStep := 8000;// this step not tested 110; // was 5000, but we don't want to control via serial but via PLC IO, just write the pump speed
         END_IF
@@ -481,7 +662,19 @@ CASE iStep OF
             iStep := 9000;
         ELSIF fbPfeifferTransaction.q_xDone THEN
             IF fbPfeifferTransaction.q_sResponseData = sSendData THEN
-                q_stStatus.iGasMode_027 := STRING_TO_INT(fbPfeifferTransaction.q_sResponseData);
+                bParsed := F_SanitizeDecimal(
+                    i_sInput := fbPfeifferTransaction.q_sResponseData,
+                    i_xAllowSign := FALSE,
+                    i_xAllowDecimalPoint := FALSE,
+                    q_lrValue => lrParsed);
+                fbGasMode(
+                    i_lrValue := lrParsed,
+                    i_xSourceValid := bParsed,
+                    i_lrMin := c_lrGasModeMin,
+                    i_lrMax := c_lrGasModeMax,
+                    i_sName := 'Pfeiffer gas mode 027');
+                q_stStatus.iGasMode_027 := LREAL_TO_INT(fbGasMode.q_lrValue);
+                q_stStatus.xGasModeValid := fbGasMode.q_xValid;
                 a_ClearTrans();  (* to provide rising edge for execute *)
                 iStep := 5000;
             ELSE
@@ -519,9 +712,12 @@ CASE iStep OF
             iStep := 0;
         END_IF
 
-    9000:
-        _A_ClearStatus();
+    9000: (* transaction failed: keep the last trusted values, only drop their validity *)
         a_ClearTrans();  (* to provide rising edge for execute *)
+        q_stStatus.xGasModeValid := FALSE;
+        q_stStatus.xSpeedValid := FALSE;
+        q_stStatus.xTempValid := FALSE;
+        q_stStatus.xPowerValid := FALSE;
         q_xError := TRUE;
 
 END_CASE
@@ -547,7 +743,11 @@ q_stStatus.xRotationSpeedAttn_306 := FALSE;
 q_stStatus.xPumpAccelerating_307 := FALSE;
 q_stStatus.diActiveRotationSpeed_309 := 0;
 q_stStatus.lrDriveCurrent_310 := 0;
-q_stStatus.diDrivePower_316 := 0;]]></ST>
+q_stStatus.diDrivePower_316 := 0;
+q_stStatus.xGasModeValid := FALSE;
+q_stStatus.xSpeedValid := FALSE;
+q_stStatus.xTempValid := FALSE;
+q_stStatus.xPowerValid := FALSE;]]></ST>
       </Implementation>
     </Action>
     <Action Name="a_ClearTrans" Id="{d9db6876-f06d-4a00-9454-fd3e236d65de}">

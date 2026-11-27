@@ -3,6 +3,11 @@
   <POU Name="FB_MX7M" Id="{15379e40-3aed-42d9-b6b1-5d3c97c28cce}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function is for the Cold Cathode MX7M from Televac. *)
 (*This function provides ILK and Set Point Protection for the Cold Cathode*)
+(* The raw analog input is routed through the common sanitizer before it is used for the
+   conversion: out-of-span ADC counts, NaN/Inf and out-of-span pressures are rejected, the last
+   trusted pressure is held and IG.xPRESS_VALID reports whether IG.rPRESS is a fresh
+   measurement. A failed channel no longer publishes a false 0 pressure.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #984). *)
 FUNCTION_BLOCK FB_MX7M EXTENDS FB_GaugeBase
 VAR_IN_OUT
 
@@ -22,6 +27,8 @@ VAR
     rPress : REAL; //Calculated pressure
     tGaugeTurnOnTmr : TON;
     iTermBits : UINT := 30518 ; //The terminal's maximum value in bits
+    fbRawSanitizer : FB_ValueSanitizer; // sanitizes the raw ADC counts
+    fbPressSanitizer : FB_ValueSanitizer; // sanitizes the converted pressure
 
     (*IOs to be linked*)
     //Controls and I/Os
@@ -41,6 +48,8 @@ VAR CONSTANT
     cGaugeStartingV : REAL := 10.5;
     cDefaultP : REAL := 0.0;
     cDeadbandV : REAL := 0.1;
+    cMinValidP : REAL := 0.0; // Lowest plausible pressure in Torr; smaller values are rejected
+    cMaxValidP : REAL := 1.0; // Highest plausible pressure in Torr; larger values are rejected
 END_VAR
 VAR PERSISTENT
     bWasOn : BOOL;
@@ -51,39 +60,54 @@ END_VAR
     <Implementation>
       <ST><![CDATA[(*Calculate raw voltage*)
 IF (iTermBits = 0) THEN iTermBits := 30518; END_IF
-rV := 10*INT_TO_REAL(i_iPRESS_R)/iTermBits;
+(* sanitize the ADC counts before they drive the conversion: out-of-span counts are rejected *)
+fbRawSanitizer(
+    i_lrValue := INT_TO_LREAL(i_iPRESS_R),
+    i_xSourceValid := TRUE,
+    i_lrMin := 0.0,
+    i_lrMax := INT_TO_LREAL(iTermBits),
+    i_sName := sPath);
+rV := 10*LREAL_TO_REAL(fbRawSanitizer.q_lrValue)/iTermBits;
 
 (*Calculate pressure*)
-rPRESS := LREAL_TO_REAL(EXPT(10,((rV-cBaseV)/cSlope+LOG(cBaseP))));
+rPress := LREAL_TO_REAL(EXPT(10,((rV-cBaseV)/cSlope+LOG(cBaseP))));
+
+(* sanitize the converted pressure: NaN/Inf and out-of-span values are rejected *)
+fbPressSanitizer(
+    i_lrValue := rPress,
+    i_xSourceValid := fbRawSanitizer.q_xValid,
+    i_lrMin := cMinValidP,
+    i_lrMax := cMaxValidP,
+    i_sName := sPath);
 
 (*Set Guage State based on the Analog voltage*)
+(* IG.rPRESS always carries the sanitized value: the fresh measurement while the sample is good,
+   the last trusted value while it is not. A bad sample never publishes a false 0 pressure. *)
+IG.rPRESS := LREAL_TO_REAL(fbPressSanitizer.q_lrValue);
 IF IG.q_xHV_DIS THEN
     IF rV >= cGaugeLowV AND rV < cGaugeMaxV THEN
         IG.eState := Valid;
-        IG.rPRESS := rPRESS;
+        IG.rPRESS := LREAL_TO_REAL(fbPressSanitizer.q_lrValue);
     ELSIF rV < cGaugeLowV AND rV >= cGaugeMinV - cDeadbandV THEN
         IG.eState := Valid;
         IG.rPRESS := cMinP;
     ELSIF rV > cGaugeStartingV - cDeadbandV THEN
         IG.eState := Starting;
-        IG.rPRESS := cDefaultP;
     ELSIF rV < cGaugeMinV - cDeadbandV THEN
         IG.eState := GaugeDisconnected;
-        IG.rPRESS := cDefaultP;
     ELSIF rV > cGaugeMaxV AND rV < cGaugeStartingV - cDeadbandV THEN
         IG.eState := OoR;
-        IG.rPRESS := cDefaultP;
     ELSIF rV = cGaugeMaxV THEN
         IG.eState := Off;
-        IG.rPRESS := cDefaultP;
     ELSE
         IG.eState := PressInvalid;
-        IG.rPRESS := cDefaultP;
     END_IF
 ELSE
     IG.eState := Off;
-    IG.rPRESS := cDefaultP;
 END_IF
+
+(* validity of the published pressure *)
+IG.xPRESS_VALID := (IG.eState = Valid) AND fbPressSanitizer.q_xValid;
 
 
 (* Ion Gauge Protection Functions *)
@@ -109,7 +133,7 @@ END_IF
 tGaugeTurnOnTmr(IN:=IG.q_xHV_DIS, PT:=T#10S, Q=>IG.xTurnOnTime);
 
 //Backwards compatibility
-IG.xPRESS_OK := (IG.eState = Valid) OR IG.xBAKEOUT;
+IG.xPRESS_OK := ((IG.eState = Valid) AND IG.xPRESS_VALID) OR IG.xBAKEOUT;
 
 (*Setpoint evaluation*)
 IG.xAT_VAC := (IG.xPRESS_OK AND (IG.rPRESS < IG.rVAC_SP)) OR IG.xBAKEOUT AND (IG.eState = Valid);
@@ -224,7 +248,8 @@ END_IF]]></ST>
     <Action Name="IO" Id="{ec6eee01-f5ee-46f9-8599-9e4aba7e16a8}">
       <Implementation>
         <ST><![CDATA[(*soft link inputs*)
-IG.i_iPRESS_R := i_iPRESS_R;
+(* publish the clamped, sanitized ADC counts, never the raw value *)
+IG.i_iPRESS_R := LREAL_TO_INT(LIMIT(0.0, fbRawSanitizer.q_lrValue, INT_TO_LREAL(iTermBits)));
 IG.i_xHV_ON := IG.q_xHV_DIS;  //not a real readback, assuming turning on HV output, HV status is ON and vice versa
 
 (*soft link outputs*)

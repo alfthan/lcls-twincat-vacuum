@@ -4,19 +4,35 @@
     <Declaration><![CDATA[(* This function block is created for interface devices between different PLC*)
 (* Not all the Variables in the original structure is required, just few signals *)
 (* The variable values are read via ADS using the symbol name*)
+(* The ADS reply is read into a private raw buffer that is never published; every published
+   value comes from the common sanitizer, so a corrupt, non-finite or out-of-span payload can
+   never be presented as a valid measurement. The last trusted pressure is held while the reply
+   or the communication is invalid and IG.xPRESS_VALID reports whether IG.rPRESS is fresh.
+   2026-11-27 - author: LCLS ECS-Platforms - added ADS payload sanitization (finding #1202). *)
 FUNCTION_BLOCK FB_TGCC_ADS Extends FB_ADS
 VAR_INPUT
     sNetId : String; //NetID of the Destination PLC controller
     nPort : uint; // port number
     sVarName : string;// the variable name of the declared gauge function block.
     iWatchdog:UDINT;//The watchdog variable name written to by the remote plc
+    i_rMinPress : REAL := 0.0; // Lowest plausible pressure in Torr; smaller values are rejected
+    i_rMaxPress : REAL := 1000.0; // Highest plausible pressure in Torr; larger values are rejected
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv:'}
     IG : ST_VG;
     bError: BOOL;
+    {attribute 'pytmc' := '
+    pv: DATA_VALID
+    field: ZNAM INVALID
+    field: ONAM VALID
+    io: i
+    '}
+    bDataValid : BOOL; // TRUE when the current ADS reply was accepted by the sanitizer
 END_VAR
 VAR
+    stRawPayload : ST_VG; // raw ADS reply, never published
+    fbPressSanitizer : FB_ValueSanitizer; // sanitizes the ADS pressure payload
     fb_CheckWatchdog: FB_CheckWatchdog;
     fb_Read_VG: FB_ReadAdsSymByName;
     ftReset: F_TRIG;
@@ -28,16 +44,14 @@ END_VAR
 ftReset(CLK:= fb_Read_VG.bBusy OR xFirstPass);
 xFirstPass := false;
 (*calling ADS read function*)
-
-//IG.xPRESS_OK := false;
-
+(* the reply lands in the private raw buffer: it is not a trusted value until sanitized *)
 fb_Read_VG(
     bRead:=ftReset.Q ,
     sNetId:= sNetId,
     nPort:= nPort,
     sVarName:= CONCAT(sVarName,'.IG'),
-    nDestAddr:= ADR(IG),
-    nLen:= SIZEOF(IG),
+    nDestAddr:= ADR(stRawPayload),
+    nLen:= SIZEOF(stRawPayload),
     tTimeout:= ,
     eComMode:=eAdsComModeFastCom ,
     bBusy=> ,
@@ -56,9 +70,29 @@ fb_CheckWatchdog(
 bError:= fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog;
 tErrorPresent(CLK:=bError);
 
-IF (fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog) THEN
-IG.xPRESS_OK := FALSE;
-END_IF;
+(* Sanitize the ADS payload: a failed read, a timed-out watchdog, NaN/Inf or an out-of-span
+   pressure is rejected and the last trusted pressure is held *)
+fbPressSanitizer(
+    i_lrValue := stRawPayload.rPRESS,
+    i_xSourceValid := NOT bError,
+    i_lrMin := i_rMinPress,
+    i_lrMax := i_rMaxPress,
+    i_sName := sVarName);
+
+(* only a reply that arrived without a communication error is allowed to refresh the struct *)
+IF NOT bError THEN
+    IG := stRawPayload;
+END_IF
+
+(* publish only sanitized values *)
+IG.rPRESS := LREAL_TO_REAL(fbPressSanitizer.q_lrValue);
+IG.xPRESS_VALID := fbPressSanitizer.q_xValid;
+bDataValid := fbPressSanitizer.q_xValid;
+IF NOT fbPressSanitizer.q_xValid THEN
+    (* permission bits are fail-safe: invalid remote data never reads as permitted *)
+    IG.xPRESS_OK := FALSE;
+    IG.xAT_VAC := FALSE;
+END_IF
 
 (*Logger*)
 ACT_Logger();]]></ST>

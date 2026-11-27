@@ -52,6 +52,13 @@ STRUCT
     '}
     iAddr	:	INT; //RS485 address
     xTimeout	:	BOOL; //Timeout (true if no comm)
+    {attribute 'pytmc' := '
+    pv: OUT_VALID;
+    field: ZNAM INVALID;
+    field: ONAM VALID;
+    io: i;
+    '}
+    xOutValid	:	BOOL; //TRUE when i_iOut is a freshly parsed, in-range reply. FALSE means the last trusted value is held.
 END_STRUCT
 END_TYPE
 ]]></Declaration>

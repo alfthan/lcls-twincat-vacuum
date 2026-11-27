@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_BoolSanitizer_Test" Id="{e5a1c742-8d36-49bf-a2e7-4b19d0c6f8a2}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Unit test for FB_BoolSanitizer.
+
+   Purpose:
+     Prove that the common boolean sanitizer publishes the safe value until a good sample
+     arrives, holds the last trusted value while the source is unhealthy, and reports
+     validity on every outcome.
+
+   Usage:
+     Registered with the TcUnit suite; each scenario is exercised over several PLC cycles.
+
+   Objectives:
+     - fresh: before any good sample the safe value is published and reported invalid,
+     - accept: a good sample is published and flagged valid,
+     - hold: an unhealthy source holds the last trusted value and reports the error.
+
+   History:
+     2026-11-27 - author: LCLS ECS-Platforms - created with the sanitizer it covers.
+*)
+FUNCTION_BLOCK FB_BoolSanitizer_Test EXTENDS TcUnit.FB_TestSuite
+VAR
+    fbSanitizer : FB_BoolSanitizer; // scenario under test
+    cycle : INT := 0; // PLC cycles this suite has run
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[TEST('BoolSanitizer_FreshInstancePublishesSafeValue');
+IF cycle = 1 THEN
+    fbSanitizer(i_xValue := TRUE, i_xSourceValid := FALSE, i_xSafeValue := FALSE, i_sName := 'test');
+    AssertFalse(fbSanitizer.q_xValue, 'nothing trusted means the safe value is published');
+    AssertFalse(fbSanitizer.q_xValid, 'unhealthy sample must not be reported valid');
+    AssertFalse(fbSanitizer.q_xHeld, 'nothing can be held before the first good sample');
+    TEST_FINISHED_NAMED('BoolSanitizer_FreshInstancePublishesSafeValue');
+END_IF
+
+TEST('BoolSanitizer_AcceptGoodSample');
+IF cycle = 2 THEN
+    fbSanitizer(i_xValue := TRUE, i_xSourceValid := TRUE, i_xSafeValue := FALSE, i_sName := 'test');
+    AssertTrue(fbSanitizer.q_xValue, 'good sample must be published');
+    AssertTrue(fbSanitizer.q_xValid, 'good sample must be reported valid');
+    AssertTrue(fbSanitizer.q_xHasTrusted, 'good sample becomes the trusted value');
+    TEST_FINISHED_NAMED('BoolSanitizer_AcceptGoodSample');
+END_IF
+
+TEST('BoolSanitizer_HoldLastTrustedOnUnhealthySource');
+IF cycle = 3 THEN
+    fbSanitizer(i_xValue := FALSE, i_xSourceValid := FALSE, i_xSafeValue := FALSE, i_sName := 'test');
+    AssertTrue(fbSanitizer.q_xValue, 'unhealthy source must hold the last trusted value');
+    AssertTrue(fbSanitizer.q_xHeld, 'held value must be reported as held');
+    AssertTrue(fbSanitizer.q_xError, 'unhealthy source must report an error');
+    TEST_FINISHED_NAMED('BoolSanitizer_HoldLastTrustedOnUnhealthySource');
+END_IF
+
+cycle := cycle + 1;]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

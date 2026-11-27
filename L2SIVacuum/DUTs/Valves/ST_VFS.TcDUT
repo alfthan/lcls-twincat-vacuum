@@ -51,6 +51,14 @@ STRUCT
     '}
     sVetoDeviceName: STRING;
 
+    {attribute 'pytmc' := '
+    pv: CMD_VALID;
+    field: ZNAM INVALID;
+    field: ONAM VALID;
+    io: i;
+    '}
+    xCMD_VALID : BOOL; // TRUE when the EPICS command word was accepted by the sanitizer. FALSE means the command outputs are held at their last trusted value.
+
 END_STRUCT
 END_TYPE]]></Declaration>
   </DUT>

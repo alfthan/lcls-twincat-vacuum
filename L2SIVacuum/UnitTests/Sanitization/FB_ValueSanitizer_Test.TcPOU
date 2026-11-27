@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ValueSanitizer_Test" Id="{d4f9a3c2-71b5-4e08-93da-6c2b8f17a05c}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Unit test for FB_ValueSanitizer.
+
+   Purpose:
+     Prove that the common sanitizer accepts good samples, rejects NaN/Inf and out-of-span
+     samples, holds the last trusted value, and reports validity on every outcome.
+
+   Usage:
+     Registered with the TcUnit suite; each scenario is exercised over several PLC cycles.
+
+   Objectives:
+     - accept: a good sample is published and flagged valid,
+     - hold: an out-of-range or non-finite sample is rejected and the last trusted value kept,
+     - fresh: before the first good sample the output is 0.0 and reported invalid,
+     - source: an unhealthy source is rejected even when the value itself looks plausible.
+
+   History:
+     2026-11-27 - author: LCLS ECS-Platforms - created with the sanitizer it covers.
+*)
+FUNCTION_BLOCK FB_ValueSanitizer_Test EXTENDS TcUnit.FB_TestSuite
+VAR
+    fbAccept : FB_ValueSanitizer; // accept + out-of-range hold scenario
+    fbNotFinite : FB_ValueSanitizer; // NaN / Inf scenario
+    fbFresh : FB_ValueSanitizer; // never-trusted and bad-source scenario
+    cycle : INT := 0; // PLC cycles this suite has run
+
+    (* bit patterns used to build values a compiler cannot write as literals *)
+    uliNaNBits : ULINT := 16#7FF8000000000000;
+    uliInfBits : ULINT := 16#7FF0000000000000;
+    lrNaN : LREAL;
+    lrInf : LREAL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* build NaN and +Inf once per invocation; endian independent because both sides share the layout *)
+MEMCPY(destAddr := ADR(lrNaN), srcAddr := ADR(uliNaNBits), n := 8);
+MEMCPY(destAddr := ADR(lrInf), srcAddr := ADR(uliInfBits), n := 8);
+
+TEST('ValueSanitizer_AcceptGoodSample');
+IF cycle = 1 THEN
+    fbAccept(i_lrValue := 5.0, i_xSourceValid := TRUE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    AssertTrue(fbAccept.q_xValid, 'good sample must be reported valid');
+    AssertFalse(fbAccept.q_xHeld, 'good sample must not be reported held');
+    AssertEquals_REAL(5.0, fbAccept.q_lrValue, 0.001, 'good sample must be published unchanged');
+    TEST_FINISHED_NAMED('ValueSanitizer_AcceptGoodSample');
+END_IF
+
+TEST('ValueSanitizer_HoldLastTrustedOnOutOfRange');
+IF cycle = 2 THEN
+    (* reuse fbAccept, which already trusts 5.0, and feed a value outside the span *)
+    fbAccept(i_lrValue := 42.0, i_xSourceValid := TRUE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    AssertFalse(fbAccept.q_xValid, 'out-of-span sample must not be reported valid');
+    AssertTrue(fbAccept.q_xHeld, 'out-of-span sample must report a held value');
+    AssertTrue(fbAccept.q_xOutOfRange, 'out-of-span sample must report the range violation');
+    AssertEquals_REAL(5.0, fbAccept.q_lrValue, 0.001, 'out-of-span sample must hold the last trusted value');
+    TEST_FINISHED_NAMED('ValueSanitizer_HoldLastTrustedOnOutOfRange');
+END_IF
+
+TEST('ValueSanitizer_RejectNaN');
+IF cycle = 3 THEN
+    fbNotFinite(i_lrValue := 5.0, i_xSourceValid := TRUE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    fbNotFinite(i_lrValue := lrNaN, i_xSourceValid := TRUE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    AssertFalse(fbNotFinite.q_xValid, 'NaN must not be reported valid');
+    AssertTrue(fbNotFinite.q_xNotFinite, 'NaN must be reported as not finite');
+    AssertEquals_REAL(5.0, fbNotFinite.q_lrValue, 0.001, 'NaN must hold the last trusted value');
+    TEST_FINISHED_NAMED('ValueSanitizer_RejectNaN');
+END_IF
+
+TEST('ValueSanitizer_RejectInf');
+IF cycle = 4 THEN
+    fbNotFinite(i_lrValue := lrInf, i_xSourceValid := TRUE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    AssertFalse(fbNotFinite.q_xValid, 'Inf must not be reported valid');
+    AssertTrue(fbNotFinite.q_xNotFinite, 'Inf must be reported as not finite');
+    AssertEquals_REAL(5.0, fbNotFinite.q_lrValue, 0.001, 'Inf must hold the last trusted value');
+    TEST_FINISHED_NAMED('ValueSanitizer_RejectInf');
+END_IF
+
+TEST('ValueSanitizer_FreshInstanceHasNoTrustedValue');
+IF cycle = 5 THEN
+    fbFresh(i_lrValue := 42.0, i_xSourceValid := TRUE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    AssertFalse(fbFresh.q_xValid, 'rejected first sample must not be reported valid');
+    AssertFalse(fbFresh.q_xHeld, 'nothing can be held before the first good sample');
+    AssertEquals_REAL(0.0, fbFresh.q_lrValue, 0.001, 'nothing trusted means the output stays 0.0');
+    TEST_FINISHED_NAMED('ValueSanitizer_FreshInstanceHasNoTrustedValue');
+END_IF
+
+TEST('ValueSanitizer_RejectUnhealthySource');
+IF cycle = 6 THEN
+    (* the value is plausible, the source is not: the sample must still be rejected *)
+    fbFresh(i_lrValue := 5.0, i_xSourceValid := FALSE, i_lrMin := 0.0, i_lrMax := 10.0, i_sName := 'test');
+    AssertFalse(fbFresh.q_xValid, 'sample from an unhealthy source must not be valid');
+    AssertTrue(fbFresh.q_xError, 'sample from an unhealthy source must report an error');
+    TEST_FINISHED_NAMED('ValueSanitizer_RejectUnhealthySource');
+END_IF
+
+cycle := cycle + 1;]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_SanitizeDecimal" Id="{c3e5b871-9a24-4c7d-b0f6-2f83d5a1e940}" SpecialFunc="None">
+    <Declaration><![CDATA[(* F_SanitizeDecimal - strict format check and conversion of one numeric reply field.
+
+   Purpose:
+     Serial devices answer with free-form ASCII fields. A truncated, empty or garbled frame
+     must never be converted into a plausible number, so the format is validated here before
+     any conversion happens. The result then feeds FB_ValueSanitizer for the range check,
+     the last-trusted hold and the validity flag.
+
+   Usage:
+     bFormatOk := F_SanitizeDecimal(
+                      i_sInput           := <raw reply field>,
+                      i_xAllowSign       := TRUE,
+                      i_xAllowDecimalPoint := TRUE,
+                      q_lrValue          => lrParsed);
+     fbSanitizer(i_lrValue := lrParsed, i_xSourceValid := bFormatOk AND <frame OK>, ...);
+
+   Objectives:
+     - reject empty fields, stray characters, repeated decimal points and sign-only fields,
+     - never return TRUE together with an undefined value.
+
+   Returns:
+     TRUE when the whole field is a valid number.
+
+   History:
+     2026-11-27 - author: LCLS ECS-Platforms - created for the external value sanitization
+                  audit (findings #1039 #1239 #1248).
+*)
+FUNCTION F_SanitizeDecimal : BOOL
+VAR_INPUT
+    /// Reply field exactly as received from the device
+    i_sInput : STRING;
+    /// TRUE when a leading '+' or '-' is accepted
+    i_xAllowSign : BOOL := TRUE;
+    /// TRUE when a single decimal point is accepted
+    i_xAllowDecimalPoint : BOOL := FALSE;
+END_VAR
+VAR_OUTPUT
+    /// Converted value; 0.0 whenever the format is rejected
+    q_lrValue : LREAL;
+    /// TRUE when the field was empty
+    q_xEmpty : BOOL;
+    /// TRUE when the field contained characters that are not allowed
+    q_xBadFormat : BOOL;
+END_VAR
+VAR
+    nLength : INT; // number of characters in the field
+    iFirst : INT; // index of the first character after an optional sign
+    sFirst : STRING(1); // first character of the field
+    sChar : STRING(1); // character under inspection
+    sNumber : STRING(255); // field without its sign
+    bNegative : BOOL; // field carried a leading '-'
+    bSeenDigit : BOOL; // at least one digit was found
+    bSeenPoint : BOOL; // a decimal point was already found
+    bFormatOk : BOOL; // field passed every check
+    i : INT; // loop index
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[F_SanitizeDecimal := FALSE;
+q_lrValue := 0.0;
+q_xEmpty := FALSE;
+q_xBadFormat := FALSE;
+nLength := LEN(i_sInput);
+
+IF nLength = 0 THEN
+    q_xEmpty := TRUE;
+ELSE
+    iFirst := 1;
+    bNegative := FALSE;
+    bSeenDigit := FALSE;
+    bSeenPoint := FALSE;
+    bFormatOk := TRUE;
+
+    (* optional sign *)
+    sFirst := MID(i_sInput, 1, 1);
+    IF sFirst = '+' THEN
+        iFirst := 2;
+        IF NOT i_xAllowSign THEN
+            bFormatOk := FALSE;
+        END_IF
+    ELSIF sFirst = '-' THEN
+        iFirst := 2;
+        bNegative := TRUE;
+        IF NOT i_xAllowSign THEN
+            bFormatOk := FALSE;
+        END_IF
+    END_IF
+
+    (* the remainder may only hold digits and, when allowed, a single decimal point *)
+    FOR i := iFirst TO nLength DO
+        sChar := MID(i_sInput, 1, i);
+        IF sChar = '.' THEN
+            IF i_xAllowDecimalPoint AND NOT bSeenPoint THEN
+                bSeenPoint := TRUE;
+            ELSE
+                bFormatOk := FALSE;
+            END_IF
+        ELSIF (sChar >= '0') AND (sChar <= '9') THEN
+            bSeenDigit := TRUE;
+        ELSE
+            bFormatOk := FALSE;
+        END_IF
+    END_FOR
+
+    (* a sign or a decimal point alone is not a number *)
+    IF NOT bSeenDigit THEN
+        bFormatOk := FALSE;
+    END_IF
+
+    IF bFormatOk THEN
+        IF iFirst > 1 THEN
+            sNumber := RIGHT(i_sInput, nLength - iFirst + 1);
+        ELSE
+            sNumber := i_sInput;
+        END_IF
+        q_lrValue := STRING_TO_LREAL(sNumber);
+        IF bNegative THEN
+            q_lrValue := -q_lrValue;
+        END_IF
+        F_SanitizeDecimal := TRUE;
+    ELSE
+        q_xBadFormat := TRUE;
+    END_IF
+END_IF]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

@@ -3,6 +3,12 @@
   <POU Name="FB_IE514" Id="{a97e2217-150d-4da1-935e-7cd0aee79bd0}" SpecialFunc="None">
     <Declaration><![CDATA[(*This function is for the IE514 connected to controller IM540*)
 (*This function provides ILK and Set Point Protection for the IE514*)
+(* The raw ADC counts of both channels are routed through the common sanitizer before they are
+   converted, and the converted pressures are sanitized again before they are published: NaN/Inf
+   and out-of-span data are rejected, the last trusted pressure is held per channel and
+   IG_CHx.xPRESS_VALID reports whether IG_CHx.rPRESS is a fresh measurement. A failed channel no
+   longer publishes a false 0 pressure that interlocks could act on.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #1195). *)
 FUNCTION_BLOCK FB_IE514 EXTENDS FB_GaugeBase
 VAR_IN_OUT
 END_VAR
@@ -50,6 +56,12 @@ VAR
     i_xERR_CH1 AT %I* : BOOL; // TRUE when NO error is present on assigned channel
     i_xERR_CH2 AT %I* : BOOL; // TRUE when NO error is present on assigned channel
     i_xCH2_SEL AT %I* : BOOL; // TRUE when CH2 selected, FALSE when CH1 selected
+
+    (* sanitizers for the external analog inputs - never consume the raw values directly *)
+    fbRawSanitizer_CH1 : FB_ValueSanitizer; // sanitizes the raw ADC counts of CH1
+    fbRawSanitizer_CH2 : FB_ValueSanitizer; // sanitizes the raw ADC counts of CH2
+    fbPressSanitizer_CH1 : FB_ValueSanitizer; // sanitizes the converted pressure of CH1
+    fbPressSanitizer_CH2 : FB_ValueSanitizer; // sanitizes the converted pressure of CH2
 END_VAR
 VAR CONSTANT
     cMaxPressure : REAL := 7.5E-5; //Torr
@@ -95,19 +107,49 @@ tHvDis_CH2(IN := IG_CH2.q_xHV_DIS, Q => IG_CH2.xTurnOnTime);
 (*Raw voltage conversion*)
 //check no div by zero
 IF (iTermBits = 0) THEN iTermBits := 30518; END_IF
-rV_CH1 := 10*INT_TO_REAL(i_iPRESS_R_CH1)/iTermBits;
-rV_CH2 := 10*INT_TO_REAL(i_iPRESS_R_CH2)/iTermBits;
+(* sanitize the ADC counts of both channels before they drive the conversion *)
+fbRawSanitizer_CH1(
+    i_lrValue := INT_TO_LREAL(i_iPRESS_R_CH1),
+    i_xSourceValid := TRUE,
+    i_lrMin := 0.0,
+    i_lrMax := INT_TO_LREAL(iTermBits),
+    i_sName := sPath);
+fbRawSanitizer_CH2(
+    i_lrValue := INT_TO_LREAL(i_iPRESS_R_CH2),
+    i_xSourceValid := TRUE,
+    i_lrMin := 0.0,
+    i_lrMax := INT_TO_LREAL(iTermBits),
+    i_sName := sPath);
+rV_CH1 := 10*LREAL_TO_REAL(fbRawSanitizer_CH1.q_lrValue)/iTermBits;
+rV_CH2 := 10*LREAL_TO_REAL(fbRawSanitizer_CH2.q_lrValue)/iTermBits;
 
 (*RAW voltage to Pressure conversion*)
 IG_CH1.rPRESS := LREAL_TO_REAL(EXPT(10, rV_CH1/10*LOG(cMaxPressure/cMinPressure) + LOG(cMinPressure))); //manual page 70 IM540 (Mode Full), (Scale) = Log
 IG_CH2.rPRESS := LREAL_TO_REAL(EXPT(10, rV_CH2/10*LOG(cMaxPressure/cMinPressure) + LOG(cMinPressure))); //manual page 70 IM540 (Mode Full), (Scale) = Log
 
+(* sanitize the converted pressures: NaN/Inf and out-of-span values are rejected and the last
+   trusted value is held per channel until a good sample arrives *)
+fbPressSanitizer_CH1(
+    i_lrValue := IG_CH1.rPRESS,
+    i_xSourceValid := fbRawSanitizer_CH1.q_xValid,
+    i_lrMin := cMinPressure,
+    i_lrMax := cMaxPressure,
+    i_sName := sPath);
+fbPressSanitizer_CH2(
+    i_lrValue := IG_CH2.rPRESS,
+    i_xSourceValid := fbRawSanitizer_CH2.q_xValid,
+    i_lrMin := cMinPressure,
+    i_lrMax := cMaxPressure,
+    i_sName := sPath);
+IG_CH1.rPRESS := LREAL_TO_REAL(fbPressSanitizer_CH1.q_lrValue);
+IG_CH2.rPRESS := LREAL_TO_REAL(fbPressSanitizer_CH2.q_lrValue);
+
 (*Pressure gauge State checks*)
 //CH1
+(* an invalid channel keeps its last trusted pressure; only the state reports the fault *)
 IF NOT i_xCH2_SEL AND IG_CH1.xHV_SW THEN
     IF NOT i_xERR_CH1 THEN
         IG_CH1.eState := GaugeDisconnected;
-        IG_CH1.rPRESS := 0;
     ELSIF rV_CH1 <= cGaugeMaxVoltage AND rV_CH1 >= cGaugeMinVoltage AND IG_CH1.i_xHV_ON THEN
         IG_CH1.eState := Valid; // NORMAL
     ELSIF rV_CH1 >= 0.0 AND rV_CH1 < cGaugeMinVoltage AND IG_CH1.i_xHV_ON THEN
@@ -116,24 +158,22 @@ IF NOT i_xCH2_SEL AND IG_CH1.xHV_SW THEN
         IG_CH1.eState := OoR; //Out of range according to manual
     ELSIF rV_CH1 > (cGaugeMaxVoltage + cDeadband) AND tHvDis_CH1.Q THEN
         IG_CH1.eState := GaugeDisconnected; //gauge disconnected
-        IG_CH1.rPRESS := 0;
     ELSIF rV_CH1 > (cGaugeMaxVoltage + cDeadband) AND NOT tHvDis_CH1.Q THEN
         IG_CH1.eState := Starting; //gauge is starting
-        IG_CH1.rPRESS := 0;
     ELSE
         IG_CH1.eState := PressInvalid; //other fault - could be no gauge, controller powering up etc.
-        IG_CH1.rPRESS := 0;
     END_IF
 ELSE
     IG_CH1.eState := Off; // Gauge turned OFF
-    IG_CH1.rPRESS := 0;
 END_IF
+(* validity of the published pressure *)
+IG_CH1.xPRESS_VALID := (IG_CH1.eState = Valid) AND fbPressSanitizer_CH1.q_xValid;
 
 //CH2
+(* an invalid channel keeps its last trusted pressure; only the state reports the fault *)
 IF i_xCH2_SEL AND IG_CH2.xHV_SW THEN
     IF NOT i_xERR_CH2 THEN
         IG_CH2.eState := GaugeDisconnected;
-        IG_CH2.rPRESS := 0;
     ELSIF rV_CH2 <= cGaugeMaxVoltage AND rV_CH2 >= cGaugeMinVoltage AND IG_CH2.i_xHV_ON THEN
         IG_CH2.eState := Valid; // NORMAL
     ELSIF rV_CH2 >= 0.0 AND rV_CH2 < cGaugeMinVoltage AND IG_CH2.i_xHV_ON THEN
@@ -142,18 +182,16 @@ IF i_xCH2_SEL AND IG_CH2.xHV_SW THEN
         IG_CH2.eState := OoR; //Out of range according to manual
     ELSIF rV_CH2 > (cGaugeMaxVoltage + cDeadband) AND tHvDis_CH2.Q THEN
         IG_CH2.eState := GaugeDisconnected; //gauge disconnected
-        IG_CH2.rPRESS := 0;
     ELSIF rV_CH2 > (cGaugeMaxVoltage + cDeadband) AND NOT tHvDis_CH2.Q THEN
         IG_CH2.eState := Starting; //gauge is starting
-        IG_CH2.rPRESS := 0;
     ELSE
         IG_CH2.eState := PressInvalid; //other fault - could be no gauge, controller powering up etc.
-        IG_CH2.rPRESS := 0;
     END_IF
 ELSE
     IG_CH2.eState := Off; // Gauge turned OFF
-    IG_CH2.rPRESS := 0;
 END_IF
+(* validity of the published pressure *)
+IG_CH2.xPRESS_VALID := (IG_CH2.eState = Valid) AND fbPressSanitizer_CH2.q_xValid;
 
 (* Ion Gauge Protection Functions *)
 (* If the PG pressure is greater than the VG.PRO_SP then the gauge is disabled *)
@@ -202,8 +240,8 @@ END_IF
 
 
 (*Pressure gauge OK checks, Backwards compatibility*)
-IG_CH1.xPRESS_OK := ((IG_CH1.eState = Valid) OR IG_CH1.xBAKEOUT);
-IG_CH2.xPRESS_OK := ((IG_CH2.eState = Valid) OR IG_CH2.xBAKEOUT);
+IG_CH1.xPRESS_OK := ((IG_CH1.eState = Valid) AND IG_CH1.xPRESS_VALID) OR IG_CH1.xBAKEOUT;
+IG_CH2.xPRESS_OK := ((IG_CH2.eState = Valid) AND IG_CH2.xPRESS_VALID) OR IG_CH2.xBAKEOUT;
 
 (*Setpoint evaluation*)
 IG_CH1.xAT_VAC := IG_CH1.xPRESS_OK AND IG_CH1.rPRESS < IG_CH1.rVAC_SP;
@@ -352,8 +390,9 @@ ELSE
     IG_CH2.i_xHV_ON := i_xHV_ON;
 END_IF
 
-IG_CH1.i_iPRESS_R := i_iPRESS_R_CH1;
-IG_CH2.i_iPRESS_R := i_iPRESS_R_CH2;
+(* publish the clamped, sanitized ADC counts, never the raw values *)
+IG_CH1.i_iPRESS_R := LREAL_TO_INT(LIMIT(0.0, fbRawSanitizer_CH1.q_lrValue, INT_TO_LREAL(iTermBits)));
+IG_CH2.i_iPRESS_R := LREAL_TO_INT(LIMIT(0.0, fbRawSanitizer_CH2.q_lrValue, INT_TO_LREAL(iTermBits)));
 
 (*soft link outputs*)
 q_xHV_DIS_CH1 := IG_CH1.q_xHV_DIS;

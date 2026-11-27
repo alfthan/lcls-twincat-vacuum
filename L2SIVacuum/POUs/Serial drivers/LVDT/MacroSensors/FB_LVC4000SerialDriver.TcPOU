@@ -1,12 +1,22 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_LVC4000SerialDriver" Id="{ae4b86c1-3ea8-4881-a7dc-2dd9995b4e63}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_LVC4000SerialDriver
+    <Declaration><![CDATA[(* Serial driver for the Macro Sensors LVC 4000 LVDT signal conditioner.
+   The device reply is external data: the numeric field is format-checked by F_SanitizeDecimal,
+   then range-checked and last-trusted-held by FB_ValueSanitizer before it is published in
+   iq_stLVC4000.i_iOut. A garbled or absent reply therefore keeps the previous trusted reading
+   instead of publishing a plausible 0, and iq_stLVC4000.xOutValid reports the held state.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #1039). *)
+FUNCTION_BLOCK FB_LVC4000SerialDriver
 VAR_INPUT
     /// rising edge execute
     i_xExecute: BOOL;
     /// Maximum wait time for reply
     i_tTimeOut: TIME := TIME#1s0ms;
+    /// Lowest plausible getOut reply, in the units the instrument reports; smaller replies are rejected
+    i_iMinOut: INT := -10;
+    /// Highest plausible getOut reply, in the units the instrument reports; larger replies are rejected
+    i_iMaxOut: INT := 10;
 END_VAR
 VAR_OUTPUT
     q_xDone: BOOL;
@@ -31,6 +41,9 @@ VAR
     fbTrans: FB_LVC4000Transaction;
     fbFormatString: FB_FormatString;
     sErrMesg : STRING := 'In step %d fbtrans failed with message: %s';
+    fbOutSanitizer : FB_ValueSanitizer; // sanitizes the parsed getOut reply
+    lrParsed : LREAL; // value parsed by F_SanitizeDecimal
+    bParsed : BOOL; // TRUE when the getOut reply had a valid numeric format
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with an LVC 4000 LVDT Signal Conditioner *)
@@ -55,7 +68,20 @@ CASE iStep OF
         sCmd := 'getOut';
         fbtrans.i_xExecute := TRUE;
         IF fbtrans.q_xDone THEN
-            iq_stLVC4000.i_iOut := STRING_TO_INT(fbtrans.q_sResponseData);
+            (* validate the numeric format, then the range, before publishing anything *)
+            bParsed := F_SanitizeDecimal(
+                i_sInput := fbtrans.q_sResponseData,
+                i_xAllowSign := TRUE,
+                i_xAllowDecimalPoint := FALSE,
+                q_lrValue => lrParsed);
+            fbOutSanitizer(
+                i_lrValue := lrParsed,
+                i_xSourceValid := bParsed,
+                i_lrMin := INT_TO_LREAL(i_iMinOut),
+                i_lrMax := INT_TO_LREAL(i_iMaxOut),
+                i_sName := 'LVC4000 getOut');
+            iq_stLVC4000.i_iOut := LREAL_TO_INT(fbOutSanitizer.q_lrValue);
+            iq_stLVC4000.xOutValid := fbOutSanitizer.q_xValid;
             iStep := 8000;
             a_ClearTrans();
         ELSIF fbtrans.q_xError THEN
@@ -71,7 +97,8 @@ CASE iStep OF
             iStep := 0;
         END_IF
 
-    9000:
+    9000: (* transaction failed: the last trusted value is held, only its validity is dropped *)
+        iq_stLVC4000.xOutValid := FALSE;
         q_xError := TRUE;
 
 END_CASE

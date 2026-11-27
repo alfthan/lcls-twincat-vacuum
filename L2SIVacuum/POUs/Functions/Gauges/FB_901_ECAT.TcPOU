@@ -2,6 +2,10 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_901_ECAT" Id="{84706132-589d-4d51-8b00-ab55510b97b2}" SpecialFunc="None">
     <Declaration><![CDATA[(* works for 901 with Ethercat interface*)
+(* The raw EtherCAT analog PDO is routed through the common sanitizer before it is published or
+   scaled: NaN/Inf and out-of-span values are rejected, the last trusted pressure is held and
+   PG.xPRESS_VALID reports whether PG.rPRESS is a fresh measurement.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #601). *)
 {attribute 'no_check'}
 FUNCTION_BLOCK FB_901_ECAT  EXTENDS FB_GaugeBase
 VAR_INPUT
@@ -22,23 +26,34 @@ VAR
     xUnderrange AT%I* : BOOL;
     i_iPRESS_R AT%I* : REAL; // input Pressure // Link to analog Input
     bWcstate AT%I* : BOOL; // 0: date valid, 1: date invalid
+    fbPressSanitizer : FB_ValueSanitizer; // sanitizes the EtherCAT pressure PDO
 
+END_VAR
+VAR CONSTANT
+    c_rMinPress : REAL := 0.0; // Lowest plausible pressure in Torr; smaller values are rejected
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* Standard MKS 9XX series conversion *)
 (* works for 901 with Ethercat interface*)
-// no div by zero
-PG.rPRESS :=i_iPRESS_R;
-PG.xPRESS_OK := xPress_OK and NOT bWcstate ;
-IF xPress_OK and NOT bWcstate THEN
-    PG.xPRESS_OK := TRUE;
+(* Sanitize the analog PDO: the terminal WC state, NaN/Inf and the configured span are checked
+   and the last trusted pressure is held while the sample is invalid *)
+fbPressSanitizer(
+    i_lrValue := i_iPRESS_R,
+    i_xSourceValid := NOT bWcstate,
+    i_lrMin := c_rMinPress,
+    i_lrMax := PG.rFULL_SCALE,
+    i_sName := sPath);
+
+(* publish only the sanitized value - a bad PDO never publishes a false 0 pressure *)
+PG.rPRESS := LREAL_TO_REAL(fbPressSanitizer.q_lrValue);
+PG.xPRESS_VALID := fbPressSanitizer.q_xValid;
+PG.xPRESS_OK := xPress_OK AND NOT bWcstate AND fbPressSanitizer.q_xValid;
+IF PG.xPRESS_OK THEN
     PG.eState := Valid; //Press OK
 ELSIF xOverrange and NOT bWcstate THEN
-    PG.xPRESS_OK := FALSE;
     PG.eState := OoR;
 ELSIF xUnderrange and NOT bWcstate THEN
-    PG.xPRESS_OK := FALSE;
     PG.eState := PressInvalid;
 
 END_IF
@@ -63,10 +78,10 @@ END_IF]]></ST>
     <Action Name="ACT_IO" Id="{afe7d8e6-827d-4f4d-895b-401bfcc2f6f0}">
       <Implementation>
         <ST><![CDATA[
+(* scale only a sanitized, clamped value; while the PDO is invalid both the pressure and its
+   scaled image keep their last trusted value and PG.xPRESS_VALID reports the held state *)
 IF PG.xPRESS_OK THEN
-      PG.i_iPRESS_R := REAL_TO_INT(i_iPRESS_R);
-ELSE
-    PG.rPRESS := 0.0;
+    PG.i_iPRESS_R := REAL_TO_INT(LIMIT(c_rMinPress, PG.rPRESS, PG.rFULL_SCALE));
 END_IF
 PG.sPath := sPath;
 ]]></ST>

@@ -108,6 +108,35 @@ STRUCT
     iSetRotationSpeed_707 : INT;
     iSetSpdMode_026: INT;
     xErrorAcknowledged: BOOL; //Not actually read back from the pump, but tells us ErrAck has processed
+
+    {attribute 'pytmc' := '
+    pv: GasMode_VALID;
+    field: ZNAM INVALID;
+    field: ONAM VALID;
+    io: i;
+    '}
+    xGasModeValid : BOOL; // TRUE when iGasMode_027 is a freshly parsed, in-range reply. FALSE means the last trusted value is held.
+    {attribute 'pytmc' := '
+    pv: Speed_VALID;
+    field: ZNAM INVALID;
+    field: ONAM VALID;
+    io: i;
+    '}
+    xSpeedValid : BOOL; // TRUE when diActiveRotationSpeed_309 is a freshly parsed, in-range reply. FALSE means the last trusted value is held.
+    {attribute 'pytmc' := '
+    pv: Temp_VALID;
+    field: ZNAM INVALID;
+    field: ONAM VALID;
+    io: i;
+    '}
+    xTempValid : BOOL; // TRUE when every temperature reply of the last poll was parsed and in range. FALSE means at least one holds its last trusted value.
+    {attribute 'pytmc' := '
+    pv: Power_VALID;
+    field: ZNAM INVALID;
+    field: ONAM VALID;
+    io: i;
+    '}
+    xPowerValid : BOOL; // TRUE when every drive current / power reply of the last poll was parsed and in range.
 END_STRUCT
 END_TYPE
 

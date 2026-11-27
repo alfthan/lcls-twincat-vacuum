@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_BoolSanitizer" Id="{b2d7e419-3c88-4f52-8d10-5a94c7f0b6e3}" SpecialFunc="None">
+    <Declaration><![CDATA[(* FB_BoolSanitizer - the common sanitizer for external boolean values.
+
+   Purpose:
+     Sit between one external boolean source and its consumer. Used for values that carry
+     information rather than permission (EPICS command words, device status bits): a
+     corrupt or stale frame must not silently change the consumer's view, so the last
+     trusted value is held until a fresh good sample arrives.
+
+   Usage:
+     fbSanitizer(
+         i_xValue       := <raw bit>,
+         i_xSourceValid := <source health>,
+         i_xSafeValue   := <value published before the first good sample>,
+         i_sName        := <diagnostic name>);
+     <consumer> := fbSanitizer.q_xValue;
+
+   Objectives:
+     - reject samples whose source is not healthy,
+     - hold the last trusted value while invalid,
+     - expose q_xValid / q_xHeld / q_xError so consumers can distinguish held from real.
+
+   Note:
+     Permission and permit flags (PRESS_OK, AT_VAC, ILK_OK) must NOT use hold-last-trusted;
+     gate them with AND <validity> instead so a bad source always reads as not permitted.
+
+   Diagnostics:
+     This block never logs per cycle; the caller owns the logging policy.
+
+   History:
+     2026-11-27 - author: LCLS ECS-Platforms - created for the external value sanitization
+                  audit (finding #1035).
+*)
+FUNCTION_BLOCK FB_BoolSanitizer
+VAR_INPUT
+    /// Raw bit exactly as read from the external source
+    i_xValue : BOOL;
+    /// TRUE when the source reports a good sample this cycle
+    i_xSourceValid : BOOL := TRUE;
+    /// Value published until the first good sample has been captured
+    i_xSafeValue : BOOL;
+    /// Diagnostic name of the signal, used by callers when they report q_xError
+    i_sName : STRING;
+END_VAR
+VAR_OUTPUT
+    /// Sanitized bit: the raw value when the sample is good, otherwise the last trusted value
+    q_xValue : BOOL;
+    /// TRUE when q_xValue came from a fresh good sample in this cycle
+    q_xValid : BOOL;
+    /// TRUE when q_xValue is a held last trusted value
+    q_xHeld : BOOL;
+    /// TRUE when the sample was rejected because the source is not healthy
+    q_xError : BOOL;
+    /// TRUE once at least one good sample has been captured
+    q_xHasTrusted : BOOL;
+END_VAR
+VAR
+    xLastTrusted : BOOL; // last accepted value, held while the source is invalid
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF i_xSourceValid THEN
+    (* good sample - it becomes the new trusted value *)
+    xLastTrusted := i_xValue;
+    q_xHasTrusted := TRUE;
+    q_xValue := i_xValue;
+ELSE
+    (* hold the last trusted value; before the first good sample use the safe value *)
+    q_xValue := SEL(q_xHasTrusted, i_xSafeValue, xLastTrusted);
+END_IF
+
+q_xValid := i_xSourceValid;
+q_xHeld := (NOT i_xSourceValid) AND q_xHasTrusted;
+q_xError := NOT i_xSourceValid]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

@@ -4,8 +4,15 @@
     <Declaration><![CDATA[(* This function block is created for interface devices between different PLC*)
 (* Not all the Variables in the original structure is required, just few signals *)
 (* They have to be linked to the custom created variables on the EL6692/5 primary side*)
+(* Every external value is routed through the common sanitizer before it is published, so
+   NaN/Inf or out-of-span fieldbus data can never reach EPICS or downstream logic. The last
+   trusted pressure is held while the payload is invalid and VG.xPRESS_VALID reports whether
+   VG.rPRESS is a fresh measurement.
+   2026-11-27 - author: LCLS ECS-Platforms - added external value sanitization (finding #643). *)
 FUNCTION_BLOCK FB_Gauge_Interface
 VAR_INPUT
+    i_rMinPress : REAL := 0.0; // Lowest plausible pressure in Torr; smaller values are rejected
+    i_rMaxPress : REAL := 1000.0; // Highest plausible pressure in Torr; larger values are rejected
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv:'}
@@ -16,6 +23,7 @@ VAR
     i_xAT_VAC AT%I*: BOOL;
     i_xPRESS_OK AT%I*: BOOL;
     i_sPath AT%I* : STRING;
+    fbPressSanitizer : FB_ValueSanitizer; // sanitizes the fieldbus pressure input
 
 END_VAR
 ]]></Declaration>
@@ -24,9 +32,21 @@ END_VAR
 (* Not all the Variables in the original structure is required, just few signals *)
 (* They have to be linked to the custom created variables on the EL6692/5 primary side*)
 
-VG.rPRESS := i_rPRESS;
-VG.xAT_VAC := i_xAT_VAC;
-VG.xPRESS_OK := i_xPRESS_OK;
+(* Sanitize the external pressure word: NaN/Inf and out-of-span data are rejected and the last
+   trusted pressure is held until a good sample arrives *)
+fbPressSanitizer(
+    i_lrValue := i_rPRESS,
+    i_xSourceValid := TRUE,
+    i_lrMin := i_rMinPress,
+    i_lrMax := i_rMaxPress,
+    i_sName := 'Gauge interface pressure');
+
+(* publish only the sanitized value *)
+VG.rPRESS := LREAL_TO_REAL(fbPressSanitizer.q_lrValue);
+(* permission bits are fail-safe: a rejected payload never reads as permitted *)
+VG.xAT_VAC := i_xAT_VAC AND fbPressSanitizer.q_xValid;
+VG.xPRESS_OK := i_xPRESS_OK AND fbPressSanitizer.q_xValid;
+VG.xPRESS_VALID := fbPressSanitizer.q_xValid;
 VG.sPath := i_sPath;
 ]]></ST>
     </Implementation>

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ValueSanitizer" Id="{a1f0c2d4-5b61-4d0e-9c33-6b1a7e0d2f41}" SpecialFunc="None">
+    <Declaration><![CDATA[(* FB_ValueSanitizer - the common sanitizer for every external numeric value.
+
+   Purpose:
+     Sit between one external source and its consumer. Every raw numeric value that crosses
+     a trust boundary (ADS payload member, EtherCAT / fieldbus PDO, analog input, serial
+     reply field, EPICS link) is passed through one instance of this block and only
+     q_lrValue is used for publishing, scaling, parsing or actuating.
+
+   Usage:
+     fbSanitizer(
+         i_lrValue      := <raw value>,
+         i_xSourceValid := <source health: comm OK, watchdog OK, checksum OK, WC state OK>,
+         i_lrMin        := <lowest plausible value>,
+         i_lrMax        := <highest plausible value>,
+         i_sName        := <diagnostic name>);
+     <consumer> := fbSanitizer.q_lrValue;   (* never the raw value *)
+
+   Objectives:
+     - reject NaN, Inf and values outside the configured span,
+     - hold the last trusted value while the input is invalid,
+     - expose q_xValid (fresh good sample), q_xHeld (output is a held value) and
+       q_xError (sample rejected) so every consumer can tell real data from held data.
+
+   Diagnostics:
+     This block never logs per cycle; the caller owns the logging policy and reports the
+     rising edge of q_xError through the shared logger, which keeps a faulty source from
+     flooding the event log at PLC cycle rate.
+
+   History:
+     2026-11-27 - author: LCLS ECS-Platforms - created for the external value sanitization
+                  audit (findings #601 #643 #984 #1035 #1039 #1195 #1202 #1205 #1210
+                  #1239 #1248).
+*)
+FUNCTION_BLOCK FB_ValueSanitizer
+VAR_INPUT
+    /// Raw value exactly as read from the external source
+    i_lrValue : LREAL;
+    /// TRUE when the source reports a good sample this cycle (comm OK, watchdog OK,
+    /// checksum/address OK, terminal WC state OK). FALSE forces the held value.
+    i_xSourceValid : BOOL := TRUE;
+    /// Lowest plausible value of the signal span; smaller values are rejected
+    i_lrMin : LREAL;
+    /// Highest plausible value of the signal span; larger values are rejected
+    i_lrMax : LREAL;
+    /// Diagnostic name of the signal, used by callers when they report q_xError
+    i_sName : STRING;
+END_VAR
+VAR_OUTPUT
+    /// Sanitized value: the raw value when the sample is good, otherwise the last trusted value
+    q_lrValue : LREAL;
+    /// TRUE when q_lrValue came from a fresh good sample in this cycle
+    q_xValid : BOOL;
+    /// TRUE when q_lrValue is a held last trusted value because the sample was rejected
+    q_xHeld : BOOL;
+    /// TRUE when the sample was rejected (bad source, NaN/Inf, or out of span)
+    q_xError : BOOL;
+    /// TRUE once at least one good sample has been captured
+    q_xHasTrusted : BOOL;
+    /// TRUE when the sample was rejected because it is NaN or Inf
+    q_xNotFinite : BOOL;
+    /// TRUE when the sample was rejected because it lies outside [i_lrMin, i_lrMax]
+    q_xOutOfRange : BOOL;
+END_VAR
+VAR
+    lrLastTrusted : LREAL; // last accepted value, held while the source is invalid
+    bIsFinite : BOOL; // sample is a finite number
+    bInRange : BOOL; // sample lies inside the configured span
+    bAccepted : BOOL; // sample may be published
+END_VAR
+VAR CONSTANT
+    /// Largest magnitude still treated as a finite number; NaN and Inf both fail this test
+    c_lrMaxFinite : LREAL := 1.0E300;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* NaN fails every comparison, so (i_lrValue = i_lrValue) is FALSE for it; +/-Inf fails the bound *)
+bIsFinite := (i_lrValue = i_lrValue) AND (ABS(i_lrValue) <= c_lrMaxFinite);
+bInRange := (i_lrValue >= i_lrMin) AND (i_lrValue <= i_lrMax);
+bAccepted := i_xSourceValid AND bIsFinite AND bInRange;
+
+IF bAccepted THEN
+    (* good sample - it becomes the new trusted value *)
+    lrLastTrusted := i_lrValue;
+    q_xHasTrusted := TRUE;
+    q_lrValue := i_lrValue;
+ELSE
+    (* hold the last trusted value; before the first good sample the output stays 0.0 *)
+    q_lrValue := lrLastTrusted;
+END_IF
+
+q_xValid := bAccepted;
+q_xHeld := (NOT bAccepted) AND q_xHasTrusted;
+q_xError := NOT bAccepted;
+q_xNotFinite := i_xSourceValid AND NOT bIsFinite;
+q_xOutOfRange := i_xSourceValid AND bIsFinite AND NOT bInRange]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
