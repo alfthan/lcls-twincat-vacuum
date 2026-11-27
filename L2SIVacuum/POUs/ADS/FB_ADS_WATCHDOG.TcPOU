@@ -1,51 +1,127 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_ADS_WATCHDOG" Id="{fa67c1d7-9960-48b3-9228-718e772a08ad}" SpecialFunc="None">
-    <Declaration><![CDATA[(*This function block is to be used whenever deivce data going to be read over ADS*)
-(*The remote plc has to instantiate this function block in order to write a watchdog variable*)
-(*that the ADS read function expects to keep checking*)
+    <Declaration><![CDATA[(*
+    Purpose:
+        Writes a rolling watchdog counter to a remote PLC over ADS. The remote
+        PLC instantiates this block so that the ADS read blocks on the other
+        side (FB_TBOOL_ADS, FB_TVGC_ADS, ...) can verify that the cross-PLC
+        link is alive: if the counter stops moving the reader reports a
+        watchdog error.
+
+    Usage:
+        Call once per scan with the net id, the ADS port and the symbol name of
+        the counter on the remote PLC. A new write is started after every
+        completed job. Every write request is bounded by i_tBusyTimeout: a job
+        that stays busy longer than that is counted as failed and latches an
+        explicit fault (bError with bTimeout, nErrorId, nTimeoutCount and the
+        message sError) instead of waiting on bBusy forever. Acknowledge the
+        latch with a rising edge on i_xReset.
+
+    Objectives:
+        - Keep the remote watchdog counter moving while the link is healthy.
+        - Bound the busy state of the ADS write and report an expiry as a
+          failed request with an explicit message and ADS error id.
+        - Keep that fault latched, with its message, until it is acknowledged.
+
+    History:
+        2019-08-01 (original) - remote-side watchdog writer for the ADS
+                    interface blocks.
+        2026-11-27 Scirix agent (task #169) - the busy state was monitored only
+                    through fb_WriteWatchdog.bBusy and the child nErrorId was
+                    discarded, so a stuck write was never reported as failed.
+                    The busy state is now bounded by i_tBusyTimeout and an
+                    expiry latches an explicit fault carrying the ADS error id
+                    and a message, cleared only through i_xReset.
+*)
 FUNCTION_BLOCK FB_ADS_WATCHDOG
 VAR_INPUT
-    sNetId : String; //NetID of the Destination PLC controller
-    nPort : uint; // port number
-    sVarName : string;// the variable name of the watchdog on the remote plc.
+    sNetId : STRING; //NetID of the destination PLC controller
+    nPort : UINT; //ADS port of the destination PLC controller
+    sVarName : STRING; //Symbol name of the watchdog counter on the remote PLC
+    i_tBusyTimeout : TIME := T#1S; //Max time the ADS write may report busy before the request counts as failed
+    i_xReset : BOOL; //Rising edge acknowledges the latched fault; the latch is never cleared automatically
 END_VAR
 VAR_OUTPUT
-    bError:BOOL;
+    bError : BOOL; //Latched fault: the ADS write reported an error or stayed busy longer than i_tBusyTimeout
+    bTimeout : BOOL; //Latched: the write stayed busy longer than i_tBusyTimeout, so the request was counted as failed
+    nErrorId : UDINT; //ADS error id reported by the failed request, 16#0 when the child reported none
+    nTimeoutCount : UDINT; //Number of expired busy states counted over the life of the block
+    sError : STRING; //Explicit message of the latched fault, empty while no fault is latched
 END_VAR
 VAR
-
-    fb_WriteWatchdog:FB_WriteWatchdog;
-    ftReset_Watchdog: F_TRIG;
-    xFirstPass: BOOL:= true;
-
+    fb_WriteWatchdog : FB_WriteWatchdog; //Beckhoff ADS job that writes the counter on the remote PLC
+    fbLogger : FB_LogMessage := (eSubsystem := E_Subsystem.FIELDBUS); //Shared diagnostics logger
+    ftReset_Watchdog : F_TRIG; //Restarts the write one scan after the previous job completed
+    rtResetFault : R_TRIG; //Rising edge of the fault acknowledge
+    rtFault : R_TRIG; //Rising edge of the latched fault, used to log it once
+    tonBusy : TON; //Bounds how long the ADS write may stay busy
+    xBusy : BOOL; //TRUE while the ADS write job is in progress (child bBusy, one scan old at the top of the cycle)
+    xFirstPass : BOOL := TRUE; //TRUE on the first scan so that the first write is started
+    xWriteError : BOOL; //Child bError of the current or last write request
+    nWriteErrorId : UDINT; //Child nErrorId of the current or last write request
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
+//Fault acknowledge: the latch is cleared only by a rising edge of i_xReset and is
+//never cleared automatically, so a request that already failed stays diagnosable.
+rtResetFault(CLK := i_xReset);
+IF rtResetFault.Q THEN
+    bError := FALSE;
+    bTimeout := FALSE;
+    nErrorId := 0;
+    sError := '';
+END_IF;
 
-ftReset_Watchdog(CLK:= fb_WriteWatchdog.bBusy OR xFirstPass);
-xFirstPass := false;
+//Restart the write on the first scans, one scan after the previous job finished, and
+//again right after a fault is acknowledged. Note that xBusy still holds the value of
+//the previous cycle at this point, because the child is called further down.
+ftReset_Watchdog(CLK := xBusy OR xFirstPass);
+xFirstPass := FALSE;
 
 (*calling ADS Watchdog function*)
+//A latched fault disables the job, so a write that already failed is not retried in a
+//loop until it has been acknowledged.
 fb_WriteWatchdog(
-    bEnable:= TRUE ,
-    sNetId:= sNetId,
-    nPort:= nPort,
-    nIdxGrp:= ,
-    nIdxOffs:= ,
-    sVarName:= sVarName,
-    tWatchdogTime:= t#30ms,
-    bSendNow:= ftReset_Watchdog.Q ,
-    bBusy=> ,
-    nLastCnt=>  ,
-    bError=> bError,
-    nErrorId=> );
+    bEnable := NOT bError,
+    sNetId := sNetId,
+    nPort := nPort,
+    nIdxGrp := 0,
+    nIdxOffs := 0,
+    sVarName := sVarName,
+    tWatchdogTime := T#30MS,
+    bSendNow := (ftReset_Watchdog.Q OR rtResetFault.Q) AND NOT bError,
+    bBusy => xBusy,
+    bError => xWriteError,
+    nErrorId => nWriteErrorId);
 
+//Bound the busy state: the ADS write is a cross-PLC request, so the wait for it to
+//complete is bounded. On expiry the request is counted as failed and an explicit
+//fault carrying the ADS error id is latched instead of waiting on bBusy forever.
+tonBusy(IN := xBusy, PT := i_tBusyTimeout);
+IF tonBusy.Q AND NOT bError THEN
+    bError := TRUE;
+    bTimeout := TRUE;
+    nTimeoutCount := nTimeoutCount + 1;
+    nErrorId := nWriteErrorId;
+    sError := CONCAT('ADS watchdog write timeout, ADS nErrorId=', UDINT_TO_STRING(nWriteErrorId));
+END_IF;
 
-(*Error*)
+//A child error is latched as well, so its explicit error id is reported rather than
+//being dropped with the next successful write.
+IF xWriteError AND NOT bError THEN
+    bError := TRUE;
+    nErrorId := nWriteErrorId;
+    sError := CONCAT('ADS watchdog write error, ADS nErrorId=', UDINT_TO_STRING(nWriteErrorId));
+END_IF;
 
-
+(*Logger*)
+//Log a newly latched fault once, through the shared logger.
+rtFault(CLK := bError);
+IF rtFault.Q THEN
+    fbLogger(sMsg := sError, eSevr := TcEventSeverity.Critical);
+END_IF;
 ]]></ST>
     </Implementation>
   </POU>
