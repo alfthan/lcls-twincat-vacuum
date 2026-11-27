@@ -12,10 +12,12 @@ END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
         pv:01
+        io: io;
     '}
     IG_CH1 : ST_VG;
     {attribute 'pytmc' := '
         pv:02
+        io: io;
     '}
     IG_CH2 : ST_VG;
 END_VAR
