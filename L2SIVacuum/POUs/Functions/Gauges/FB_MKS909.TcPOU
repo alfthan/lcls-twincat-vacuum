@@ -25,7 +25,7 @@ VAR
     timer:TON;
     (*Default set point 50 mT*)
     rDefaultVAC_SP: REAL := 9E-3; // as per manual
-    iTermBits: UINT := 30518 ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    iTermBits: UINT := gc_uiEL3174TermBits ; // The terminal's maximum value in bits, EL3174 default (see GVL Constants)
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
     q_xHV_DIS AT %Q* : BOOL := TRUE; // Active Low
@@ -40,18 +40,19 @@ END_VAR
 IF PG.rVAC_SP = 0 THEN
     PG.rVAC_SP := rDefaultVAC_SP;
 END_IF
-// check no div by zero
-If (iTermBits=0) THEN iTermBits := 30518;END_IF
-rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
+// check no div by zero: fall back to the EL3174 full-scale count
+If (iTermBits=0) THEN iTermBits := gc_uiEL3174TermBits;END_IF
+// raw counts -> measured volts at the terminal
+rV := gc_rEL3174FullScaleVolts*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
 
 (* Pressure OK check *)
 // Gauge state
 // Is the gauge plugged in, and within a reasonable range?
-IF  (rV >= 0.1 AND rV <=8.7) THEN // as per manual
-    IG.rPRESS := LREAL_TO_REAL(EXPT(10, rV-10));
+IF  (rV >= gc_rMKS9XXValidMinVolts AND rV <= gc_rMKS9XXValidMaxVolts) THEN // as per manual
+    IG.rPRESS := LREAL_TO_REAL(EXPT(gc_rMKS9XXLogLawBase, rV-gc_rMKS9XXExponentOffset));
     IG.eState := Valid;
     IG.xPRESS_OK := TRUE; //Backwards compatibility
-ELSIF rV > 8.7 AND rV < 10 THEN
+ELSIF rV > gc_rMKS9XXValidMaxVolts AND rV < gc_rEL3174FullScaleVolts THEN
     IG.rPRESS :=rMaxPressure;
     IG.xPRESS_OK := FALSE;
     IG.eState := Off;

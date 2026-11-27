@@ -4,6 +4,25 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* EL3174 analog input terminal scaling.
+       The vacuum architecture reads its analog gauges through a Beckhoff
+       EL3174 (+/-10 V, 16 bit + sign): full scale is +10 V, i.e. 30518
+       counts.  Declared once here so that changing the terminal type is a
+       single edit and the declaration default, the runtime fallback and
+       the conversion can never drift apart. *)
+    gc_uiEL3174TermBits : UINT := 30518;     // terminal counts at +10 V full scale
+    gc_rEL3174FullScaleVolts : REAL := 10.0; // terminal full-scale input in volts
+
+    (* MKS 9XX series vendor log-law conversion.
+       P [Torr] = gc_rMKS9XXLogLawBase ^ (V - gc_rMKS9XXExponentOffset) is
+       the vendor curve of the 909/972/925 ion gauges.  The validity window
+       is only meaningful against that same curve, so its limits are
+       declared next to the constants that define it. *)
+    gc_rMKS9XXLogLawBase : REAL := 10.0;      // base of the log-law transfer function
+    gc_rMKS9XXExponentOffset : REAL := 10.0;  // decades subtracted from the measured volts
+    gc_rMKS9XXValidMinVolts : REAL := 0.1;    // below this the gauge is disconnected (manual)
+    gc_rMKS9XXValidMaxVolts : REAL := 8.7;    // above this, up to full scale, the gauge is off
 END_VAR
 ]]></Declaration>
   </GVL>
