@@ -1,9 +1,19 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VRC_EBD" Id="{2d64f56d-4c72-4bd6-8f7c-38b44c217f1d}" SpecialFunc="None">
-    <Declaration><![CDATA[(* This function block is similar to the FB_VGC, except it has 2 outputs to actuate the Valve*)
-(* This Function Block Implements Basic Functionality for certain types of valves e.g Turbo Isolation valves, Apperture Valve *)
-(* Note Interlock Logic is External *)
+    <Declaration><![CDATA[(* FB_VRC_EBD - VRC-family valve block with two open-command outputs (EBD: electrically driven, dual solenoid).
+Purpose: implement the current FB_VRC valve contract, i.e. publish the shared control struct ST_VRC (extends
+ST_ValveBase) with pv_xOPN_SW, ALM_RST (pv_xAlmRst), FORCE_OPN (pv_xOvrdOpn), POS_STATE, ERROR and ErrMsg, and
+additionally drive a second open output (q_xOPN_DO_2) so that a single valve command actuates both solenoids.
+It is the dual-output counterpart of FB_VRC and is maintained with the FB_VRC behaviour - the older
+FB_VGC_EBD block it was copied from is deprecated (POUs/Functions/Deprecated/Valves) and must not be used as
+the reference: latched errors are cleared through the ALM_RST PV, FORCE_OPN is released when the global
+override is withdrawn, and OPEN / OPEN_F are distinguished by whether the open command is still commanded.
+Typical use: turbo isolation valves, aperture valves.
+Note: interlock logic is external - wire F_<Device>_ILK to i_xExtILK_OK.
+History: 2019-06-20 ghalym - EBD valves and control methods.
+         2026-11-27 task #108 - brought forward to the current FB_VRC contract (alarm reset via ALM_RST, override
+                              release, OPEN/OPEN_F position states, first-pass state initialisation). *)
 FUNCTION_BLOCK FB_VRC_EBD EXTENDS FB_Valve
 VAR_IN_OUT
 
@@ -46,19 +56,25 @@ fbFSInit( CLK := TRUE, Q => xFirstPass);
 IF xFirstPass THEN
     iq_stValve.eVGC_State := Vented;
     iq_stValve.pv_xOPN_SW := FALSE;
+    ePrevState := INVALID;
 END_IF
 
 
 ///Check valve position
-IF NOT iq_stValve.i_xClsLS AND iq_stValve.i_xOpnLS THEN
+IF iq_stValve.i_xClsLS AND  iq_stValve.i_xOpnLS THEN
+    iq_stValve.eState:=INVALID;
+ELSIF NOT iq_stValve.i_xClsLS AND iq_stValve.i_xOpnLS AND iq_stValve.q_xOPN_DO THEN
     iq_stValve.eState:=OPEN;
-ELSIF iq_stValve.i_xClsLS AND NOT iq_stValve.i_xOpnLS THEN
+ELSIF NOT iq_stValve.i_xClsLS AND iq_stValve.i_xOpnLS AND NOT iq_stValve.q_xOPN_DO THEN
+    iq_stValve.eState:=OPEN_F;
+ELSIF iq_stValve.i_xClsLS AND NOT iq_stValve.i_xOpnLS AND NOT iq_stValve.q_xOPN_DO THEN
     iq_stValve.eState:=CLOSED;
 ELSIF NOT iq_stValve.i_xClsLS AND NOT iq_stValve.i_xOpnLS THEN
     iq_stValve.eState:=MOVING;
 ELSE
     iq_stValve.eState:=INVALID;
 END_IF
+
 
 (*evaluate Valve open external interlock*)
 iq_stValve.xOPN_OK := i_xExtILK_OK;
@@ -87,8 +103,10 @@ IF rtOK.Q AND iq_stValve.pv_xOvrdOpn THEN
     fbLogger(sMsg:='Override expired', eSevr:=TcEventSeverity.Warning);
 END_IF
 
+// Release the Force Open bit when the system override is false
+IF NOT(i_xOverrideMode) THEN  iq_stValve.pv_xOvrdOpn :=FALSE; END_IF
 //Override timer
-tonOvrd(IN:=iq_stValve.pv_xOvrdOpn, PT:=T#10S);
+tonOvrd(IN:=iq_stValve.pv_xOvrdOpn, PT:=tOvrd);
 
 (* Here's where the valve opens *)
 iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
@@ -117,7 +135,12 @@ tCLStimeout(IN:= NOT iq_stValve.q_xOPN_DO, PT := tTimeOutDuration);
 ACT_IO();
 
 // Log States and triggers
-ACT_Logger();]]></ST>
+ACT_Logger();
+
+(*Reset Alarms*)
+ACT_ResetAlarms();
+
+]]></ST>
     </Implementation>
     <Action Name="ACT_IO" Id="{c0be74a4-7c48-4930-969d-53ad2264e18b}">
       <Implementation>
@@ -169,6 +192,17 @@ IF tAction.Q THEN fbLogger(sMsg:='Valve commanded open', eSevr:=TcEventSeverity.
 tOverrideActivated(CLK:= (tonOvrd.Q AND i_xOverrideMode));
 IF tOverrideActivated.Q THEN fbLogger(sMsg:='Valve override mode activated', eSevr:=TcEventSeverity.Warning); END_IF
 ]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="ACT_ResetAlarms" Id="{4f1c6d7b-9a53-4a2e-8c37-02b98a1f5d64}">
+      <Implementation>
+        <ST><![CDATA[(* Acknowledge latched valve errors through the ALM_RST PV (ST_ValveBase.pv_xAlmRst). *)
+iq_stValve.bErrorPresent R= iq_stValve.pv_xAlmRst;
+
+IF ( iq_stValve.pv_xAlmRst) THEN
+    iq_stValve.sErrorMessage:='';
+     iq_stValve.pv_xAlmRst := FALSE;
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Method Name="M_IsClosed" Id="{4e438a9f-4342-41bd-a380-0da74e2a5082}">
