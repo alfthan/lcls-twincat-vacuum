@@ -37,7 +37,7 @@ VAR
 
     //rDefaultVAC_SP: REAL := 9E-3; // as per manual
 
-    iTermBits : UINT := 30518; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    iTermBits : UINT := gc_uiAnalogTermFullScaleBits; // The terminal's maximum value in bits default el3174 as per vacuum architecture
     binit : BOOL := TRUE;  // Do something at startup
 
     (*IOs to be linked*)
@@ -92,15 +92,17 @@ END_IF
 tHvDis_CH1(IN := IG_CH1.q_xHV_DIS, Q => IG_CH1.xTurnOnTime);
 tHvDis_CH2(IN := IG_CH2.q_xHV_DIS, Q => IG_CH2.xTurnOnTime);
 
-(*Raw voltage conversion*)
+(*Raw voltage conversion: the terminal's full-scale count is gc_uiAnalogTermFullScaleBits and
+  the full-scale voltage is the gauge's own cGaugeMaxVoltage, so a terminal or gauge scaling change is
+  a single edit that the conversion, the divide-by-zero fallback and the pressure transfer all share.*)
 //check no div by zero
-IF (iTermBits = 0) THEN iTermBits := 30518; END_IF
-rV_CH1 := 10*INT_TO_REAL(i_iPRESS_R_CH1)/iTermBits;
-rV_CH2 := 10*INT_TO_REAL(i_iPRESS_R_CH2)/iTermBits;
+IF (iTermBits = 0) THEN iTermBits := gc_uiAnalogTermFullScaleBits; END_IF
+rV_CH1 := cGaugeMaxVoltage*INT_TO_REAL(i_iPRESS_R_CH1)/iTermBits;
+rV_CH2 := cGaugeMaxVoltage*INT_TO_REAL(i_iPRESS_R_CH2)/iTermBits;
 
 (*RAW voltage to Pressure conversion*)
-IG_CH1.rPRESS := LREAL_TO_REAL(EXPT(10, rV_CH1/10*LOG(cMaxPressure/cMinPressure) + LOG(cMinPressure))); //manual page 70 IM540 (Mode Full), (Scale) = Log
-IG_CH2.rPRESS := LREAL_TO_REAL(EXPT(10, rV_CH2/10*LOG(cMaxPressure/cMinPressure) + LOG(cMinPressure))); //manual page 70 IM540 (Mode Full), (Scale) = Log
+IG_CH1.rPRESS := LREAL_TO_REAL(EXPT(10, rV_CH1/cGaugeMaxVoltage*LOG(cMaxPressure/cMinPressure) + LOG(cMinPressure))); //manual page 70 IM540 (Mode Full), (Scale) = Log
+IG_CH2.rPRESS := LREAL_TO_REAL(EXPT(10, rV_CH2/cGaugeMaxVoltage*LOG(cMaxPressure/cMinPressure) + LOG(cMinPressure))); //manual page 70 IM540 (Mode Full), (Scale) = Log
 
 (*Pressure gauge State checks*)
 //CH1

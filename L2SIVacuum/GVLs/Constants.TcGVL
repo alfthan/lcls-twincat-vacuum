@@ -4,6 +4,12 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Analog input terminal scaling of the gauge FBs (hardware dependent).
+       Counts the Beckhoff EL3174 analog input terminal reports at 10 V full scale on the range
+       used by the vacuum architecture. Change the full-scale count here only; the gauge FBs
+       reference it for their initial value and for their divide-by-zero fallback. *)
+    gc_uiAnalogTermFullScaleBits : UINT := 30518; // Raw count reported by the terminal at full scale
 END_VAR
 ]]></Declaration>
   </GVL>
