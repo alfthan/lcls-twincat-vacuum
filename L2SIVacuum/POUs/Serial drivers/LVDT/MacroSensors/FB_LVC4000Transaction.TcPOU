@@ -13,12 +13,20 @@ VAR_INPUT
     i_sCmd: T_MAXSTRING;
     // Parameter field
     i_sParam: T_MAXSTRING;
+    /// Acknowledge/reset of the latched q_xError and q_xTimeout faults
+    i_xAck: BOOL;
 END_VAR
 VAR_OUTPUT
     q_xDone: BOOL;
     q_sResponseData: STRING;
+    /// Latched error: set when a transaction fails, cleared only by i_xAck from a known-safe state
     q_xError: BOOL;
+    /// Latched timeout: set when the device does not reply in time, cleared only by i_xAck
     q_xTimeout: BOOL;
+    /// TRUE while the current transaction is failed (not latched: drives the calling state machine)
+    q_xErrorActive: BOOL;
+    /// TRUE while the current transaction timed out (not latched)
+    q_xTimeoutActive: BOOL;
     q_sResult: T_MAXSTRING;
     /// Last String Sent to Serial Device - for debugging
     q_sLastSentString: STRING;
@@ -32,6 +40,8 @@ END_VAR
 VAR
     rtExecute: R_TRIG;
     iStep: INT;
+    rtAck: R_TRIG; //Rising edge of the acknowledge input i_xAck
+    xAckPending: BOOL; //Acknowledge received, cleared when the block is in a known-safe state
     fbClearComBuffer: ClearComBuffer;
     sSendString: STRING;
     fbFormatString: FB_FormatString;
@@ -52,13 +62,29 @@ END_VAR
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with an LVC 4000 LVDT Signal Conditioner *)
 
+(* Fault acknowledge/reset: the latched faults are cleared only here, and only from a known-safe state,
+   i.e. with no transaction in progress and the execute input released. A new command never clears them. *)
+rtAck(CLK:= i_xAck);
+IF rtAck.Q THEN
+    xAckPending := TRUE;
+END_IF
+IF xAckPending AND NOT i_xExecute AND ((iStep = 0) OR (iStep = 100) OR (iStep = 9000)) THEN
+    xAckPending := FALSE;
+    q_xError := FALSE;
+    q_xTimeout := FALSE;
+    q_sResult := '';
+    IF iStep = 9000 THEN
+        iStep := 0;
+    END_IF
+END_IF
+
 (* rising edge trigger *)
 rtExecute(CLK:= i_xExecute);
 IF rtExecute.Q THEN
     q_xDone	:= FALSE;
     q_sResponseData := '';
-    q_xError := FALSE;
-    //q_xTimeout := FALSE;
+    q_xErrorActive := FALSE;
+    q_xTimeoutActive := FALSE;
     q_sResult:= '';
     q_sLastSentString := '';
     q_sLastReceivedString:= '';
@@ -126,9 +152,10 @@ CASE iStep OF
         ELSIF fbReceiveString.RxTimeout OR tonTimeout.Q THEN
             q_sResult := 'Device failed to reply within timeout period';
             q_xTimeout := TRUE;
+            q_xTimeoutActive := TRUE;
             iStep := 9000;
         ELSIF fbReceiveString.StringReceived THEN
-            q_xTimeout := FALSE; //no timeout
+            q_xTimeoutActive := FALSE; //no timeout
             q_sLastReceivedString := sReceivedString;
             q_sResponseData := sReceivedString;
             q_sResult := 'Success.';
@@ -144,6 +171,7 @@ CASE iStep OF
 
     9000:
         q_xError := TRUE;
+        q_xErrorActive := TRUE;
 
 
 

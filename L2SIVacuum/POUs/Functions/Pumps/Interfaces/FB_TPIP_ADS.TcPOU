@@ -10,17 +10,20 @@ VAR_INPUT
     nPort : uint; // port number
     sVarName : string;// the variable name of the declared pip/pin function block.
     iWatchdog:UDINT;//The watchdog variable name written to by the remote plc
+    i_xAck : BOOL; //Acknowledge/reset of the latched bError fault: the only way bError is cleared
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv:'}
     IG : ST_VG;
-    bError: BOOL;
+    bError: BOOL; //Latched fault: set by an ADS read error or a watchdog trip, cleared only by i_xAck
 END_VAR
 VAR
     fb_CheckWatchdog: FB_CheckWatchdog;
     fb_Read_VG: FB_ReadAdsSymByName;
     ftReset: F_TRIG;
     xFirstPass: BOOL:= true;
+    xErrorLatched : BOOL; //Latched fault, driven from the ADS read error and the watchdog trip
+    rtAck : R_TRIG; //Rising edge of the acknowledge input i_xAck
 
 END_VAR
 ]]></Declaration>
@@ -52,11 +55,22 @@ fb_CheckWatchdog(
     bWatchdog=> ,
     nLastCnt=> );
 
-bError:= fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog;
-tErrorPresent(CLK:=bError);
-
+(*Latched fault: an ADS read error or a watchdog trip sets the latch and it stays set across cycles.
+It is cleared only by the acknowledge input i_xAck, and only while both fault sources are healthy again.*)
 IF (fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog) THEN
-IG.xPRESS_OK := FALSE;
+    xErrorLatched := TRUE;
+END_IF
+
+rtAck(CLK:= i_xAck);
+IF rtAck.Q AND NOT (fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog) THEN
+    xErrorLatched := FALSE;
+END_IF
+
+bError := xErrorLatched;
+tErrorPresent(CLK:= bError);
+
+IF xErrorLatched THEN
+IG.xPRESS_OK := FALSE; // While the fault is latched the readback is held not-OK
 END_IF;
 
 (*Logger*)

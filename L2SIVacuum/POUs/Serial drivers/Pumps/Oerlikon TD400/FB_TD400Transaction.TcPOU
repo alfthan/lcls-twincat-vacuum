@@ -17,11 +17,19 @@ VAR_INPUT
     i_wControlWord: WORD;
     /// Maximum wait time for reply
     i_tTimeOut: TIME := TIME#1s0ms;
+    /// Acknowledge/reset of the latched q_xError and q_xTimeout faults
+    i_xAck: BOOL;
 END_VAR
 VAR_OUTPUT
     q_xDone: BOOL;
+    /// Latched error: set when a transaction fails, cleared only by i_xAck from a known-safe state
     q_xError: BOOL;
+    /// Latched timeout: set when the device does not reply in time, cleared only by i_xAck
     q_xTimeout: BOOL;
+    /// TRUE while the current transaction is failed (not latched: drives the calling state machine)
+    q_xErrorActive: BOOL;
+    /// TRUE while the current transaction timed out (not latched)
+    q_xTimeoutActive: BOOL;
     q_sResult: STRING(MAX_STRING_LENGTH);
     /// Sent data
     q_abSendData: ARRAY[0..23] OF BYTE;
@@ -55,6 +63,8 @@ END_VAR
 VAR
     rtExecute: R_TRIG;
     iStep: INT;
+    rtAck: R_TRIG; //Rising edge of the acknowledge input i_xAck
+    xAckPending: BOOL; //Acknowledge received, cleared when the block is in a known-safe state
     fbClearComBuffer: ClearComBuffer;
     tonTimeout: TON;
     wTemp: WORD;
@@ -69,13 +79,32 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with an Oerlikon TD20 *)
+(* Fault handling: q_xError and q_xTimeout are latched and are cleared only by the acknowledge
+   input i_xAck, never by a new execute edge. q_xErrorActive/q_xTimeoutActive report the current
+   transaction only, so the calling state machine keeps working while a fault stays latched. *)
+
+(* Fault acknowledge/reset: the latched faults are cleared only here, and only from a known-safe state,
+   i.e. with no transaction in progress and the execute input released. A new command never clears them. *)
+rtAck(CLK:= i_xAck);
+IF rtAck.Q THEN
+    xAckPending := TRUE;
+END_IF
+IF xAckPending AND NOT i_xExecute AND ((iStep = 0) OR (iStep = 100) OR (iStep = 9000)) THEN
+    xAckPending := FALSE;
+    q_xError := FALSE;
+    q_xTimeout := FALSE;
+    q_sResult := '';
+    IF iStep = 9000 THEN
+        iStep := 0;
+    END_IF
+END_IF
 
 (* rising edge trigger *)
 rtExecute(CLK:= i_xExecute);
 IF rtExecute.Q THEN
     q_xDone	:= FALSE;
-    q_xError := FALSE;
-    q_xTimeout := FALSE;
+    q_xErrorActive := FALSE;
+    q_xTimeoutActive := FALSE;
     q_sResult:= '';
     MEMSET(destAddr:=ADR(q_abSendData), fillByte:=0, n:=SIZEOF(q_abSendData));
     MEMSET(destAddr:=ADR(q_abResponseData), fillByte:=0, n:=SIZEOF(q_abResponseData));
@@ -161,6 +190,7 @@ CASE iStep OF
         ELSIF fbReceiveData.RxTimeout OR tonTimeout.Q THEN
             q_sResult := 'Device failed to reply within timeout period';
             q_xTimeout := TRUE;
+            q_xTimeoutActive := TRUE;
             iStep := 9000;
         ELSIF fbReceiveData.DataReceived THEN
             q_abLastReceivedArray := q_abResponseData;
@@ -218,6 +248,7 @@ CASE iStep OF
         q_wConverterTemp_P11:= 0;
         q_wPumpTemp_P127:= 0;
         q_xError := TRUE;
+        q_xErrorActive := TRUE;
 
 END_CASE]]></ST>
     </Implementation>

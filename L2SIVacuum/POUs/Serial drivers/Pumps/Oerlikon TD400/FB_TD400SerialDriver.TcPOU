@@ -8,6 +8,8 @@ VAR_INPUT
     /// Maximum wait time for reply
     i_tTimeOut: TIME := TIME#1s0ms;
     i_wControlWord: WORD;
+    /// Acknowledge/reset of the latched q_xError and q_xTimeout faults
+    i_xAck: BOOL;
 END_VAR
 VAR_OUTPUT
     q_xDone: BOOL;
@@ -61,6 +63,9 @@ ELSE
     bSetFreq := FALSE;
 END_IF
 
+(* Forward the acknowledge/reset of the latched command faults to the transaction block *)
+fbTD400Transaction.i_xAck := i_xAck;
+
 (* rising edge trigger *)
 rtExecute(CLK:= i_xExecute);
 IF rtExecute.Q  THEN
@@ -85,7 +90,7 @@ CASE iStep OF
         fbTD400Transaction.i_dwPWE := 0;
         fbTD400Transaction.i_xExecute := TRUE;
 
-        IF fbTD400Transaction.q_xError THEN
+        IF fbTD400Transaction.q_xErrorActive THEN
             iCatch := iCatch +1;
             a_TransactionErrorMesg();
             iStep := 9000;
@@ -107,7 +112,7 @@ CASE iStep OF
             fbTD400Transaction.i_dwPWE := WORD_TO_DWORD(iq_stControl.wSetSetpointFreq_P24);
             fbTD400Transaction.i_xExecute := TRUE;
 
-            IF fbTD400Transaction.q_xError THEN
+            IF fbTD400Transaction.q_xErrorActive THEN
                 iCatch := iCatch +1;
                 a_TransactionErrorMesg();
                 iStep := 9000;
@@ -132,7 +137,7 @@ CASE iStep OF
         fbTD400Transaction.i_bIND := 0;
         fbTD400Transaction.i_dwPWE := 0;
         fbTD400Transaction.i_xExecute := TRUE;
-        IF fbTD400Transaction.q_xError THEN
+        IF fbTD400Transaction.q_xErrorActive THEN
             iCatch := iCatch +1;
             a_TransactionErrorMesg();
             iStep := 9000;
@@ -152,7 +157,7 @@ CASE iStep OF
         fbTD400Transaction.i_bIND := 0;
         fbTD400Transaction.i_dwPWE := 0;
         fbTD400Transaction.i_xExecute := TRUE;
-        IF fbTD400Transaction.q_xError THEN
+        IF fbTD400Transaction.q_xErrorActive THEN
             iCatch := iCatch +1;
             a_TransactionErrorMesg();
             iStep := 9000;
@@ -172,7 +177,7 @@ CASE iStep OF
         fbTD400Transaction.i_bIND := 0;
         fbTD400Transaction.i_dwPWE := 0;
         fbTD400Transaction.i_xExecute := TRUE;
-        IF fbTD400Transaction.q_xError THEN
+        IF fbTD400Transaction.q_xErrorActive THEN
             iCatch := iCatch +1;
             a_TransactionErrorMesg();
             iStep := 9000;
@@ -193,7 +198,7 @@ CASE iStep OF
         fbTD400Transaction.i_bIND := 0;
         fbTD400Transaction.i_dwPWE := 0;
         fbTD400Transaction.i_xExecute := TRUE;
-        IF fbTD400Transaction.q_xError THEN
+        IF fbTD400Transaction.q_xErrorActive THEN
             iCatch := iCatch +1;
             a_TransactionErrorMesg();
             iStep := 9000;
@@ -213,7 +218,7 @@ CASE iStep OF
         fbTD400Transaction.i_bIND := 0;
         fbTD400Transaction.i_dwPWE := 0;
         fbTD400Transaction.i_xExecute := TRUE;
-        IF fbTD400Transaction.q_xError THEN
+        IF fbTD400Transaction.q_xErrorActive THEN
             iCatch := iCatch +1;
             a_TransactionErrorMesg();
             iStep := 9000;
@@ -255,7 +260,7 @@ fbTD400Transaction(
     q_wConverterTemp_P11=> q_stStatus.wConverterTemp_P11,
     q_wPumpTemp_P127=> q_stStatus.wPumpTemp_P127);
 
-IF fbTD400Transaction.q_xError THEN
+IF fbTD400Transaction.q_xErrorActive THEN
     a_ClearStatus();
 END_IF
 
@@ -297,7 +302,7 @@ a_ClearStatus();]]></ST>
     sOut => q_sResult);
 
 a_ClearStatus();
-q_xTimeout := fbTD400Transaction.q_xTimeout;]]></ST>
+q_xTimeout := fbTD400Transaction.q_xTimeoutActive;]]></ST>
       </Implementation>
     </Action>
   </POU>

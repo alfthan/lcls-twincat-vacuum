@@ -9,15 +9,19 @@ VAR_INPUT
     sNetId : String; //NetID of the Destination PLC controller
     nPort : uint; // port number
     sVarName : string;// the variable name of the watchdog on the remote plc.
+    i_xAck : BOOL; //Acknowledge/reset of the latched bError fault: the only way bError is cleared
 END_VAR
 VAR_OUTPUT
-    bError:BOOL;
+    bError:BOOL; //Latched fault: set by an ADS write error, cleared only by i_xAck
 END_VAR
 VAR
 
     fb_WriteWatchdog:FB_WriteWatchdog;
     ftReset_Watchdog: F_TRIG;
     xFirstPass: BOOL:= true;
+    xErrorActive : BOOL; //Live ADS write error reported by fb_WriteWatchdog
+    xErrorLatched : BOOL; //Latched fault, driven from xErrorActive
+    rtAck : R_TRIG; //Rising edge of the acknowledge input i_xAck
 
 END_VAR
 ]]></Declaration>
@@ -39,11 +43,23 @@ fb_WriteWatchdog(
     bSendNow:= ftReset_Watchdog.Q ,
     bBusy=> ,
     nLastCnt=>  ,
-    bError=> bError,
+    bError=> xErrorActive,
     nErrorId=> );
 
 
 (*Error*)
+(*Latched fault: an ADS write error sets the latch and it stays set across cycles. It is cleared only
+by the acknowledge input i_xAck, and only while the write path reports healthy again.*)
+IF xErrorActive THEN
+    xErrorLatched := TRUE;
+END_IF
+
+rtAck(CLK:= i_xAck);
+IF rtAck.Q AND NOT xErrorActive THEN
+    xErrorLatched := FALSE;
+END_IF
+
+bError := xErrorLatched;
 
 
 ]]></ST>

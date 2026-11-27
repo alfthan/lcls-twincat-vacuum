@@ -7,6 +7,8 @@ VAR_INPUT
     i_xExecute: BOOL;
     /// Maximum wait time for reply
     i_tTimeOut: TIME := TIME#1s0ms;
+    /// Acknowledge/reset of the latched q_xError and q_xTimeout faults
+    i_xAck: BOOL;
 END_VAR
 VAR_OUTPUT
     q_xDone: BOOL;
@@ -35,6 +37,9 @@ END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with an LVC 4000 LVDT Signal Conditioner *)
 
+(* Forward the acknowledge/reset of the latched command faults to the transaction block *)
+fbtrans.i_xAck := i_xAck;
+
 (* rising edge trigger *)
 rtExecute(CLK:= i_xExecute);
 IF rtExecute.Q  THEN
@@ -58,7 +63,7 @@ CASE iStep OF
             iq_stLVC4000.i_iOut := STRING_TO_INT(fbtrans.q_sResponseData);
             iStep := 8000;
             a_ClearTrans();
-        ELSIF fbtrans.q_xError THEN
+        ELSIF fbtrans.q_xErrorActive THEN
             a_ErrorMesg();
             iStep := 9000;
             a_ClearTrans();
@@ -85,7 +90,7 @@ fbTrans(
     iq_stSerialRXBuffer:= iq_stSerialRXBuffer,
     iq_stSerialTXBuffer:= iq_stSerialTXBuffer );
 
-iq_stLVC4000.xTimeout := fbtrans.q_xTimeout;
+iq_stLVC4000.xTimeout := fbtrans.q_xTimeoutActive;
 q_sLastSentString := fbtrans.q_sLastSentString;
 q_sLastReceivedString := fbtrans.q_sLastReceivedString;]]></ST>
     </Implementation>
