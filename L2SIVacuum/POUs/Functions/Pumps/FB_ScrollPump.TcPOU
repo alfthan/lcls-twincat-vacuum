@@ -10,8 +10,21 @@ VAR_IN_OUT
 
 END_VAR
 VAR_OUTPUT
+    (* Roughing-pump control/status interface published to EPICS.
+       The pv name is deliberately left empty: pytmc builds the record
+       prefix from the FB instance's own pragma (e.g. 'pv: L2SI:VAC:PFO:01'
+       on the instance in the PLC project's GVL) and the record name from
+       the pv of the matching ST_RoughPump member (RUN_SW, RUN_DO, ILK_OK,
+       AT_SPD, WARN, ERROR, STATE). Each of those members declares the io
+       direction of its own PV; the io: io declared here is the direction of
+       this interface as a whole, which carries both an EPICS command
+       (RUN_SW is io) and readbacks, and it only applies to a member that
+       declares no io of its own. Naming this container would insert an
+       extra path segment and rename every published pump PV
+       (<inst>:RUN_SW -> <inst>:PFO:RUN_SW). *)
     {attribute 'pytmc' := '
     pv:
+    io: io;
     '}
     iq_stPFO	:	ST_RoughPump;
 END_VAR
@@ -24,6 +37,18 @@ VAR
     tTimerDuration : Time:= T#150S;
     //Previous_RunSW : BOOL;
     // Digital Output to be linked
+    (* Hardware run command readback. The EPICS command/readback pair lives
+       on iq_stPFO (RUN_SW / RUN_DO); this pragma publishes the state of the
+       physical %Q output itself, so it needs a record name of its own -
+       reusing RUN_DO would emit a duplicate record under the instance
+       prefix. io: i because the output is driven by the PLC, never by EPICS. *)
+    {attribute 'pytmc' := '
+    pv: RUN_OUT;
+    io: i;
+    field: ZNAM FALSE;
+    field: ONAM TRUE;
+    field: DESC Hardware run digital output linked to the pump drive;
+    '}
     q_xRunDo AT%Q*	:   BOOL;
 END_VAR
 
