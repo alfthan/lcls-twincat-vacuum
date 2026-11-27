@@ -6,8 +6,21 @@ FUNCTION_BLOCK FB_972  EXTENDS FB_GaugeBase
 VAR_INPUT
 END_VAR
 VAR_OUTPUT
+    (* Gauge control/status interface published to EPICS.
+       The pv name is deliberately left empty: pytmc builds the record
+       prefix from the FB instance's own pragma (e.g. 'pv: L2SI:VAC:GAUGE:01'
+       on the instance in the PLC project's GVL) and each record name from
+       the pv of the matching ST_VG member (PRESS, AT_VAC, PRESS_OK, STATE,
+       HV_SW, VAC_SP, ...). Those members declare their own io direction,
+       DESC, ZNAM/ONAM and EGU. The io: io declared here is the direction of
+       this interface as a whole, which carries both EPICS commands (HV_SW,
+       Auto_On, VAC_SP) and readbacks, and it only applies to a member that
+       declares no io of its own. Naming this container would insert an extra
+       path segment and rename every published gauge PV
+       (<inst>:PRESS -> <inst>:PG:PRESS) for every gauge in every IOC. *)
     {attribute 'pytmc' := '
     pv:
+    io: io;
     '}
     PG	: ST_VG;
 END_VAR
