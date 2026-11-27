@@ -4,6 +4,22 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Analog input terminal that carries the raw analog pressure / current signal *)
+    gc_uiTermBitsBipolar10V  : UINT := 32767; // Full-scale raw count of a 16 bit bipolar (+/-10 V) analog input terminal
+    gc_rTermFullScaleVoltage : REAL := 10.0;  // Voltage [V] that corresponds to the terminal's full-scale count
+
+    (* MKS 317A Pirani gauge on a 937A controller, values as per the MKS 937A manual page 61.
+       P [Torr] = 10^(rV / volts-per-decade - decade offset), rV being the terminal voltage in V. *)
+    gc_rMKS317ADecadeBase      : REAL := 10.0; // Base of the logarithmic transfer function
+    gc_rMKS317AVoltsPerDecade  : REAL := 0.6;  // Slope of the transfer function [V per pressure decade]
+    gc_rMKS317ADecadeOffset    : REAL := 12.0; // Decade offset of the transfer function
+    gc_rMKS317ADisconnectedV   : REAL := 0.18; // Below this output voltage the gauge / its cable is disconnected; lower edge of the valid-low window
+    gc_rMKS317AValidLoMaxV     : REAL := 0.22; // Upper edge of the valid-low window around the nominal 0.2 V low boundary
+    gc_rMKS317ANormalValidMinV : REAL := 0.6;  // Lower edge of the normal valid range
+    gc_rMKS317AValidHiV        : REAL := 9.7;  // Upper edge of the normal valid range
+    gc_rMKS317AValidHiMaxV     : REAL := 9.9;  // Upper edge of the valid-high window
+    gc_rMKS317ANoSensorV       : REAL := 10.0; // Full-scale output: no sensor connected
 END_VAR
 ]]></Declaration>
   </GVL>

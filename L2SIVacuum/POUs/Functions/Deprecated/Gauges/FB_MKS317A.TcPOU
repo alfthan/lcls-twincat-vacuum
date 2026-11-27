@@ -5,6 +5,20 @@
 (* This function is for the Pirani MKS 317 connected to a 937A*)
 (* This function block is used to provide protection and automatic turn on of ion gauges,
  it also manages the turn on of the AT_VAC boolean, and checks to make sure the pressure is good *)
+(* Usage: link i_iPRESS_R to the 0..10 V analog input that carries the 937A pressure output and
+   read pressure, state and setpoint flags from the PG interface struct. *)
+(* Objectives: convert the raw terminal counts into a terminal voltage, apply the 937A
+   logarithmic transfer function and classify the reading into the MKS 317A validity window
+   before maintaining xPRESS_OK and xAT_VAC. *)
+(* The terminal full-scale count, the terminal voltage span, the transfer function constants and
+   every validity boundary are declared once in GVL Constants (gc_uiTermBitsBipolar10V,
+   gc_rTermFullScaleVoltage, gc_rMKS317A*) and referenced by name only, so one value defines
+   each threshold and a calibration change is a one-line edit. *)
+(* History:
+     2016-05-20 - Alex Wallace and Scott Stubbs: 937B logarithmic output conversion
+     2018-09-28 - Margaret Ghaly
+     2026-11-27 - the conversion and validity literals were replaced with the named constants in
+                  GVL Constants and GaugeDisconnected / xPRESS_OK now share one boundary. *)
 {attribute 'obsolete' := 'FB_MKS317A has been deprecated and is not valid!'}
 FUNCTION_BLOCK FB_MKS317A  Extends FB_GaugeBase
 VAR_IN_OUT
@@ -17,16 +31,12 @@ VAR_OUTPUT
     {attribute 'pytmc' := '
     pv:
     '}
-    PG : ST_VG;
+    PG : ST_VG; // Gauge interface struct: pressure, state, xPRESS_OK and xAT_VAC
 END_VAR
 VAR
-    rV	:	REAL;
-    rMinPressure: REAL := 1E-3;
+    rV	:	REAL; // Terminal voltage [V], scaled from the raw analog input counts
+    rMinPressure: REAL := 1E-3; // Pressure [Torr] reported while the output sits in the valid-low window
     rDefaultVAC_SP: REAL :=5E-2; // Default 50 mT
-    rValidLoBoundary	:	REAL := 0.2;//Manual page 61
-    rValidHiBoundary	:	REAL := 9.7; //manual oage 61
-    rDisconnectedBoundary	:	REAL := 0.17;
-    rNoSensorBoundary	:	REAL := 10;
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
 END_VAR
@@ -36,9 +46,12 @@ END_VAR
 (* 5-20-2016, Alex Wallace and Scott Stubbs *)
 (* 09-28-2018, Margaret Ghaly *)
 (* This function will read the pressure from any gauge on a 937A. *)
+(* All hardware scaling and validity limits are named constants in GVL Constants *)
 
-rV := 10*INT_TO_REAL(PG.i_iPRESS_R)/32767;
-PG.rPRESS := LREAL_TO_REAL(EXPT(10,((rV)/0.6)-12)); //manual page 61 937A
+(* Terminal voltage [V] from the raw analog input counts *)
+rV := gc_rTermFullScaleVoltage*INT_TO_REAL(PG.i_iPRESS_R)/gc_uiTermBitsBipolar10V;
+(* 937A logarithmic transfer function, manual page 61 *)
+PG.rPRESS := LREAL_TO_REAL(EXPT(gc_rMKS317ADecadeBase,((rV)/gc_rMKS317AVoltsPerDecade)-gc_rMKS317ADecadeOffset)); //manual page 61 937A
 
 
 //Default setpoint
@@ -46,15 +59,19 @@ IF PG.rVAC_SP = 0 THEN
     PG.rVAC_SP := rDefaultVAC_SP;
 END_IF
 
-IF (rV <=9.7 ) AND (rV>=0.6) THEN
+(* Gauge state, from the terminal voltage *)
+IF (rV <= gc_rMKS317AValidHiV) AND (rV >= gc_rMKS317ANormalValidMinV) THEN
     PG.eState := Valid; // normal
-ELSIF rV >= 0.18 AND rV <= 0.22 THEN
+ELSIF (rV >= gc_rMKS317ADisconnectedV) AND (rV <= gc_rMKS317AValidLoMaxV) THEN
     PG.eState := ValidLo; //LO
     PG.rPRESS := rMinPressure;
-ELSIF rV > 9.7 AND rV<= 9.9 THEN
+ELSIF (rV > gc_rMKS317AValidHiV) AND (rV <= gc_rMKS317AValidHiMaxV) THEN
     PG.eState := ValidHi; //HIGH
-ELSIF rV < 0.18 THEN
+ELSIF rV < gc_rMKS317ADisconnectedV THEN
     PG.eState := GaugeDisconnected; //not on
+    PG.rPRESS := -1;
+ELSIF rV >= gc_rMKS317ANoSensorV THEN
+    PG.eState := PressInvalid; //full-scale output: no sensor connected
     PG.rPRESS := -1;
 ELSE
     PG.eState := PressInvalid; //other fault - could be no gauge, controller powering up etc
@@ -62,8 +79,9 @@ ELSE
 END_IF
 
 (* Pressure OK check *)
-(* Pressure gauge OK checks *)
-PG.xPRESS_OK := (rV <=rValidHiBoundary ) AND (rV>=rDisconnectedBoundary);
+(* Pressure gauge OK checks: the gauge is connected and inside the normal valid range, so
+   xPRESS_OK cannot contradict the GaugeDisconnected state above *)
+PG.xPRESS_OK := (rV <= gc_rMKS317AValidHiV) AND (rV >= gc_rMKS317ADisconnectedV);
 //PG.xPRESS_OK := (PG.rPRESS >= rMinPressure);
 
 (* Setpoint evaluation *)
