@@ -3,6 +3,22 @@
   <POU Name="FB_MKS909" Id="{e4d2d06a-72de-4bb3-a238-37b2fab13b2b}" SpecialFunc="None">
     <Declaration><![CDATA[(* Standard MKS 909 hot cathode *)
 (* works for 972 and 925 *)
+(*
+    Purpose : standard MKS 909 hot cathode (works for the 972 and 925 controllers).
+              Converts the analog pressure input to Torr, evaluates the at-vacuum
+              setpoint and gates the ion gauge high voltage on the pirani pressure.
+    Usage   : call once per PLC cycle with PG wired to the associated pirani gauge
+              and IG wired to the ion gauge EPICS/IO interface.
+    Objectives:
+              - gauge state and pressure conversion as per the MKS manual
+              - the externally supplied setpoints (VAC_SP, PRO_SP, SP_HYS) are
+                clamped into the declared span [rMinPressure, rMaxPressure] before
+                they feed the AT_VAC comparison or the HV permit; out-of-range
+                requests are rejected, logged and force the HV permit off
+    History : 2026-11-27 validate/clamp the gauge setpoints against rMinPressure and
+              rMaxPressure, reject and log out-of-range requests and force a safe
+              HV state while they are invalid (audit findings #969, #1199)
+*)
 
 FUNCTION_BLOCK FB_MKS909 EXTENDS FB_GaugeBase
 
@@ -20,12 +36,24 @@ VAR_IN_OUT
 END_VAR
 VAR
     rV : REAL;
-    rMaxPressure	:	REAL := 5E-2; //Torr
-    rMinPressure	:	REAL := 1E-10; //Torr
+    rMaxPressure	:	REAL := 5E-2; //Torr - top of the gauge span, setpoints are clamped to it
+    rMinPressure	:	REAL := 1E-10; //Torr - bottom of the gauge span, setpoints are clamped to it
     timer:TON;
     (*Default set point 50 mT*)
     rDefaultVAC_SP: REAL := 9E-3; // as per manual
     iTermBits: UINT := 30518 ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    (* Setpoint validation: externally supplied setpoints are clamped into
+       [rMinPressure, rMaxPressure] before they drive the AT_VAC comparison or the
+       ion gauge HV permit *)
+    rVAC_SPReq : REAL;           // requested at-vacuum setpoint before validation [Torr]
+    rVAC_SPPGFallback : REAL;    // validated PG.rVAC_SP request, used when the ion gauge setpoint is unset [Torr]
+    rVAC_SPCmd : REAL;           // validated at-vacuum setpoint used by the AT_VAC comparison [Torr]
+    rPRO_SPCmd : REAL;           // validated protection setpoint used by the HV permit [Torr]
+    rHYS_PRCmd : REAL;           // validated protection hysteresis used by the HV release [Torr]
+    rHVRelease_PR : REAL;        // validated HV release threshold, PRO_SP + SP_HYS clipped to the span [Torr]
+    xSPValid : BOOL := TRUE;     // TRUE when every requested setpoint is inside the gauge span
+    xSPValidPrev : BOOL := TRUE; // previous value of xSPValid, for edge triggered diagnostics
+    sSPFault : T_MaxString;      // names of the setpoints rejected on the current scan
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
     q_xHV_DIS AT %Q* : BOOL := TRUE; // Active Low
@@ -36,10 +64,9 @@ END_VAR
       <ST><![CDATA[(* Standard MKS 9XX series conversion *)
 (* works for 972 and 925 *)
 
-//Default setpoint 50 mT
-IF PG.rVAC_SP = 0 THEN
-    PG.rVAC_SP := rDefaultVAC_SP;
-END_IF
+(* Validate/clamp the externally supplied setpoints before they are used *)
+ACT_ValidateSetpoints();
+
 // check no div by zero
 If (iTermBits=0) THEN iTermBits := 30518;END_IF
 rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
@@ -61,11 +88,18 @@ ELSE
 END_IF
 
 
-IF (PG.rPRESS <= IG.rPRO_SP)  AND (PG.xPRESS_OK) THEN
+(* Ion gauge HV permit: only when every setpoint is valid and the pirani pressure is
+   below the validated protection setpoint *)
+IF NOT xSPValid THEN
+    (* Rejected setpoint, force the not permitted state: high voltage off *)
+         IG.q_xHV_DIS := FALSE;
+         IG.xHV_SW := FALSE;
+         IG.xILKOk := FALSE;
+    ELSIF (PG.rPRESS <= rPRO_SPCmd) AND (PG.xPRESS_OK) THEN
          IG.q_xHV_DIS := IG.xHV_SW;
          IG.xILKOk := TRUE;
     ELSIF NOT IG.q_xHV_DIS AND timer.Q THEN
-        IF IG.rPRESS > (IG.rPRO_SP + IG.rHYS_PR) OR PG.rPRESS > (IG.rPRO_SP + IG.rHYS_PR) THEN
+        IF IG.rPRESS > rHVRelease_PR OR PG.rPRESS > rHVRelease_PR THEN
         IG.q_xHV_DIS := FALSE;
         IG.xHV_SW := FALSE;
         END_IF
@@ -78,8 +112,8 @@ IF (PG.rPRESS <= IG.rPRO_SP)  AND (PG.xPRESS_OK) THEN
 
 timer(IN:= NOT IG.q_xHV_DIS, PT:= T#2s);
 
-(* Setpoint evaluation *)
-IG.xAT_VAC := IG.xPRESS_OK AND (IG.rPRESS < IG.rVAC_SP);
+(* Setpoint evaluation: a rejected setpoint never reports at vacuum *)
+IG.xAT_VAC := xSPValid AND IG.xPRESS_OK AND (IG.rPRESS < rVAC_SPCmd);
 
 (*Soft IO Mapping*)
 ACT_IO();
@@ -104,7 +138,17 @@ q_xHV_DIS := IG.q_xHV_DIS;]]></ST>
     </Action>
     <Action Name="ACT_Logger" Id="{4573c79c-5500-42f0-a9f8-4a16e69be2a6}">
       <Implementation>
-        <ST><![CDATA[// ILK logger
+        <ST><![CDATA[// Setpoint validation: report rejected requests and their recovery
+IF xSPValid <> xSPValidPrev THEN
+    IF xSPValid THEN
+        fbLogger(sMsg:='Gauge setpoints back inside the span, HV permit restored.', eSevr:=TcEventSeverity.Info);
+    ELSE
+        fbLogger(sMsg:=CONCAT('Gauge setpoint out of range, HV disabled: ', sSPFault), eSevr:=TcEventSeverity.Warning);
+    END_IF
+    xSPValidPrev := xSPValid;
+END_IF
+
+// ILK logger
 IF NOT IG.xILKOk AND NOT IG.q_xHV_DIS THEN
          fbLogger(sMsg:='Lost external interlock while gauge was on.', eSevr:=TcEventSeverity.Critical);
 END_IF
@@ -167,6 +211,40 @@ IF NOT (IG.rHYS_PR = rHYS_PR) THEN
 END_IF;]]></ST>
       </Implementation>
     </Action>
+    <Action Name="ACT_ValidateSetpoints" Id="{6b1c2f5e-9d34-4c7a-8b16-2f0d5a4e7c91}">
+      <Implementation>
+        <ST><![CDATA[(* Clamp the externally supplied pressure setpoints into the gauge span
+   [rMinPressure, rMaxPressure]. A zero at-vacuum request means 'not configured' and falls
+   back to the manual default; every other out-of-range or non-numeric request is rejected
+   (xSPValid = FALSE), which forces the HV permit off in the main body. The clamped copies
+   are used internally, the requested values are left untouched so that a rejected request
+   stays visible through EPICS. *)
+xSPValid := TRUE;
+sSPFault := '';
+
+(* PG at-vacuum setpoint: legacy request, zero means unset *)
+rVAC_SPReq := PG.rVAC_SP;
+IF rVAC_SPReq = 0 THEN
+    rVAC_SPReq := rDefaultVAC_SP;
+END_IF
+rVAC_SPPGFallback := M_ValidateSetpoint(rRequest := rVAC_SPReq, rFallback := rDefaultVAC_SP, sName := 'PG.rVAC_SP');
+
+(* AT_VAC setpoint: the ion gauge setpoint is authoritative, the validated PG request is
+   the fallback when the ion gauge setpoint is unset *)
+rVAC_SPReq := IG.rVAC_SP;
+IF rVAC_SPReq = 0 THEN
+    rVAC_SPReq := rVAC_SPPGFallback;
+END_IF
+rVAC_SPCmd := M_ValidateSetpoint(rRequest := rVAC_SPReq, rFallback := rDefaultVAC_SP, sName := 'IG.rVAC_SP');
+
+(* Protection setpoint and hysteresis: the HV permit and the HV release threshold *)
+rPRO_SPCmd := M_ValidateSetpoint(rRequest := IG.rPRO_SP, rFallback := rMinPressure, sName := 'IG.rPRO_SP');
+rHYS_PRCmd := M_ValidateSetpoint(rRequest := IG.rHYS_PR, rFallback := rMinPressure, sName := 'IG.rHYS_PR');
+
+(* The release threshold must stay inside the gauge span as well *)
+rHVRelease_PR := MIN(rMaxPressure, rPRO_SPCmd + rHYS_PRCmd);]]></ST>
+      </Implementation>
+    </Action>
     <Method Name="M_AutoOn" Id="{1d96f54d-bcda-48da-aa82-5381de88f995}">
       <Declaration><![CDATA[METHOD M_AutoOn : BOOL
 VAR_INPUT
@@ -184,6 +262,43 @@ END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[This^.iTermBits := TermBits;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ValidateSetpoint" Id="{3f8d24a1-5c76-4e39-9a0b-71e6c2d4b8f5}">
+      <Declaration><![CDATA[(* Clamp one externally supplied pressure setpoint into [rMinPressure, rMaxPressure].
+   Returns the request itself when it is inside the span, the matching span limit when it
+   is out of range, or rFallback when the request is not a number. Every rejected request
+   clears xSPValid (which disables the HV permit) and adds sName to sSPFault so that the
+   caller can report it. *)
+METHOD M_ValidateSetpoint : REAL
+VAR_INPUT
+    rRequest : REAL;    // requested setpoint [Torr]
+    rFallback : REAL;   // value used when the request is not a number [Torr]
+    sName : STRING;     // setpoint name for the diagnostics message
+END_VAR
+VAR
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[M_ValidateSetpoint := rRequest;
+
+IF (rRequest <> rRequest) THEN // NaN: not a usable number, fall back to a sane value
+    M_ValidateSetpoint := rFallback;
+ELSIF (rRequest < rMinPressure) THEN
+    M_ValidateSetpoint := rMinPressure;
+ELSIF (rRequest > rMaxPressure) THEN
+    M_ValidateSetpoint := rMaxPressure;
+ELSE
+    RETURN;
+END_IF
+
+(* Request rejected, make sure the HV permit cannot be satisfied and name the culprit *)
+xSPValid := FALSE;
+IF sSPFault = '' THEN
+    sSPFault := sName;
+ELSE
+    sSPFault := CONCAT(sSPFault, CONCAT(', ', sName));
+END_IF]]></ST>
       </Implementation>
     </Method>
   </POU>
