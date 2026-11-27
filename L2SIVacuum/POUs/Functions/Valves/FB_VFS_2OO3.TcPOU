@@ -1,11 +1,43 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VFS_2OO3" Id="{49c99ac3-de9e-429f-8ce1-1cbcf3f0f700}" SpecialFunc="None">
-    <Declaration><![CDATA[(* This function block implements basic functionality for Fast Shutter/Valves*)
-(* NOTE: All 3 gauge cards with fast TTL output need to be installed in the same gauge controller*)
-(* Create a separate virtual PLC for the fast shutter logic, and tie/map this task to the FAST I/O portion of the ethercat bus,
- so we can scan these I/Os faster than the rest of the vacuum I/Os.
-The Fast shutter was tested with PLC task Cycle Base Time 50us with cycle time 0.050ms.*)
+    <Declaration><![CDATA[(*
+    FB_VFS_2OO3 - fast shutter (VFS) valve control with 2-out-of-3 gauge trigger logic.
+
+    PURPOSE
+        Same shutter hardware as FB_VFS (one open solenoid q_xOPN_DO, three parallel
+        close pulse outputs q_xClose_A/B/C), but the fast trigger is derived from three
+        cold-cathode gauge trigger inputs, either as a 2-out-of-3 vote or from one
+        selectable channel (i_e2OO3_MODE). Per-gauge fault counters are retentive.
+
+    USAGE
+        Instantiated once per 2oo3 fast shutter and mapped to the FAST I/O portion of
+        the ethercat bus (tested with a 50 us cycle base time, 0.050 ms cycle). All
+        three gauge cards with fast TTL output must sit in the same gauge controller.
+        The normal-task half is FB_VFS_2OO3Interface; io_fbFFHWO must be the hardware
+        fast-fault output the shutter reports into.
+
+    OBJECTIVES
+        - Derive xTrigger / xPress_OK from i_e2OO3_MODE, so a disconnected gauge is
+          counted as a trigger instead of as a healthy channel.
+        - Run the open/close sequence as one explicit, non-blocking state machine
+          (E_VFS_State, CASE in the body) with a step counter, one action per state and
+          a documented exit condition per transition - the same machine as FB_VFS.
+        - Bound every wait: tOPNTimeOutDuration for the open limit switch and
+          tCLSTimeOutDuration for the close limit switch, each ending in a latched
+          timeout state instead of an open-ended wait.
+
+    HISTORY
+        2019-02 / M. Ghaly
+            Block written (FB_VFS), with ad hoc open/close BOOL flags and free-running timers.
+        2022-01 / J. Govednik
+            Added the 2-out-of-3 gauge logic and the per-gauge fault counters.
+        2026-11-27 / Scirix Agent
+            Open/close sequence refactored into E_VFS_State + CASE, matching FB_VFS. The
+            ad hoc open/close flags, the close/open hold timers and the close-timeout path
+            that could never expire were removed (audit finding #1022, convention
+            conv_1cb8e41c12ca).
+*)
 FUNCTION_BLOCK FB_VFS_2OO3 EXTENDS FB_Valve
 VAR_INPUT
     i_xPMPS_OK : BOOL; (*External MPS interlock, Set to TRUE when no PMPS interlock is required*)
@@ -50,18 +82,27 @@ VAR
     tOvrd : TIME := T#10s;
     rTrigOverrideOpen : R_TRIG;
 
-    xClose : BOOL;
-    xOpen : BOOL;
-    CloseTimer : TON;
-    TimDur : TIME := T#20MS;
-    OpenTimer : TON;
-    OpenTimDur : TIME := T#2S;
+    (* Open/close sequence - explicit state machine, transition table in the body *)
+    eState : E_VFS_State := E_VFS_State.eVFS_Idle;      // current sequence state
+    eStatePrev : E_VFS_State := E_VFS_State.eVFS_Idle;  // previous scan's state, drives the step counter
+    nStep : UINT;                                       // transition counter, +1 per state change, saturates at 65535
 
-    (*Timeouts*)
-    tCLSTimeOutDuration : TIME := T#0.5S;
-    tOPNTimeOutDuration : TIME := T#10S;
-    tOPNtimeout : TON;
-    tCLStimeout : TON;
+    (* Sequence requests, evaluated once per scan before the state machine *)
+    xCloseDemand : BOOL; (* 2oo3 trigger or lost external interlock - veto and override aware *)
+    xCloseReq : BOOL;    (* close request that is not satisfied yet: no pulse once the close switch is made *)
+    xOpenReq : BOOL;     (* one open sequence: EPICS open edge while permitted, or the qualified override *)
+
+    (* Sequence timers - all called unconditionally, see the end of the body *)
+    tonOpenTimeout : TON;  (* open wait bound: open solenoid energized, open limit switch not made *)
+    tonOpenSeat : TON;     (* open seat time: open solenoid held after the open limit switch makes *)
+    tonClosePulse : TON;   (* close pulse width: how long the close solenoids are energized *)
+    tonCloseTimeout : TON; (* close wait bound: close pulse finished, close limit switch not made *)
+
+    (* Sequence times *)
+    tOPNTimeOutDuration : TIME := T#10S;   (* max time to reach the open limit switch after an open command *)
+    tCLSTimeOutDuration : TIME := T#0.5S;  (* max time to see the close limit switch after the close pulse *)
+    tOpenSeatDuration : TIME := T#2S;      (* hold time on the open limit switch before the open DO is released *)
+    tClosePulseDuration : TIME := T#20MS;  (* vendor close-coil pulse width *)
 
 
     (*IO to the valve(s)*)
@@ -109,7 +150,8 @@ VAR PERSISTENT
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[(*Fast Shutter/Valve Function Block*)
+      <ST><![CDATA[
+(*Fast Shutter/Valve Function Block*)
 (*M.Ghaly Feb 2019*)
 (*J. Govednik Jan 2022 Adding 2OO3 logic*)
 
@@ -131,7 +173,8 @@ END_IF
 (*set Veto bit*)
 IF (i_xVeto_Enable) THEN
     xVeto := (i_xVetoValveClosed AND NOT i_xVetoValveOpenDO);
-    ELSE xVeto := FALSE;
+ELSE
+    xVeto := FALSE;
 END_IF
 
 (*User will be able to select gauge channel or 2oo3 function*)
@@ -167,61 +210,177 @@ CASE i_e2OO3_MODE OF
         xTrigger := i_xTriggerIG3 OR NOT i_xPress_OK_IG3;
 END_CASE;
 
-//xVeto:= i_xVeto AND (i_xVetoValveClosed AND NOT i_xVetoValveOpenDO);
-(*Input Trigger to close the Fast Shutter*)
-(*Neighboring Valves Should also be triggered to Close*)
-//IF ((xTrigger) OR NOT (i_xPress_OK) OR NOT (i_xExt_OK))  AND NOT (xVeto) AND NOT (tonOvrd.Q AND i_xOverrideMode) THEN
-IF ((xTrigger) OR NOT (i_xExt_OK))  AND NOT (xVeto) AND NOT (tonOvrd.Q AND i_xOverrideMode) THEN
-    xClose := TRUE;
-    xOpen := FALSE;
-    q_xVAC_FAULT_OK := FALSE;
+(* EPICS open command: the rising edge arms one open sequence *)
+rtOPN_SW(CLK := i_xOPN_SW);
+
+(* Close demand. The 2oo3 trigger already carries the per-gauge pressure validity, so
+   only the external interlock is added here; a veto device and an active override keep
+   the trigger from acting. This is the condition that used to drive the close flag. *)
+xCloseDemand := ((xTrigger) OR NOT (i_xExt_OK))
+                AND NOT (xVeto)
+                AND NOT (tonOvrd.Q AND i_xOverrideMode);
+
+(* A close request is only meaningful while the shutter is not already at the close
+   limit switch, otherwise the close pulse would be re-issued every scan. *)
+xCloseReq := (xCloseDemand OR i_xCLS_SW) AND NOT i_xClsLS;
+
+(* The close demand latches the external fault and drops the neighbouring-valve interlock *)
+IF xCloseDemand THEN
     xERR_ExtFault := TRUE;
-    i_xCLS_SW := TRUE;
-    q_xOPN_DO := FALSE;
-    //i_xOPN_SW :=FALSE;
-ELSIF (i_xCLS_SW) THEN
-    xClose := TRUE;
-    xOpen := FALSE;
-    q_xVAC_FAULT_OK:= FALSE;
-    i_xCLS_SW := TRUE;
-    q_xOPN_DO := FALSE;
-    //i_xOPN_SW :=FALSE;
-ELSIF ((rtOPN_SW.Q) AND xOPN_OK AND NOT i_xOpnLS) OR (tonOvrd.Q AND i_xOverrideMode) THEN
-    q_xOPN_DO := TRUE;
+END_IF
+IF (xCloseDemand OR i_xCLS_SW) THEN
+    q_xVAC_FAULT_OK := FALSE;
 END_IF
 
-//Hold Valve close signals to TRUE until limit swith is hit
-IF (xClose) AND (NOT i_xClsLS) THEN
-    q_xClose_A := TRUE;
-    q_xClose_B := TRUE;
-    q_xClose_C := TRUE;
+(*OPN OK evaluation bit *)
+xOPN_OK := (NOT xERR_ExtFault) AND (NOT xTrigger OR xVeto);
+
+(* Open request: the rising edge of the EPICS open command while opening is permitted,
+   or the manual override once it has been qualified for tOvrd. *)
+xOpenReq := ((rtOPN_SW.Q) AND xOPN_OK AND NOT i_xOpnLS) OR (tonOvrd.Q AND i_xOverrideMode);
+
+(* ----------------------------------------------------------------------------------
+   Fast shutter open/close sequence - explicit, non-blocking state machine.
+
+   The outputs are driven to their de-energized state at the top of the machine and
+   only the active state energizes anything, so a cold start, a latched fault or an
+   unhandled state cannot leave a coil energized. A close request always wins over an
+   open request, because closing is the safe direction for a fast shutter.
+
+     state             action                          exit condition
+     ----------------  ------------------------------  ---------------------------------
+     eVFS_Idle         none                            xCloseReq -> eVFS_Closing
+                                                       xOpenReq  -> eVFS_Opening
+     eVFS_Opening      q_xOPN_DO                       xCloseReq -> eVFS_Closing
+                                                       i_xOpnLS  -> eVFS_OpenSeat
+                                                       tonOpenTimeout.Q -> eVFS_OpnTimeout
+     eVFS_OpenSeat     q_xOPN_DO                       xCloseReq -> eVFS_Closing
+                                                       NOT i_xOpnLS -> eVFS_Opening
+                                                       tonOpenSeat.Q -> eVFS_Open
+     eVFS_Open         none                            xCloseReq -> eVFS_Closing
+     eVFS_Closing      q_xClose_A/B/C                  i_xClsLS -> eVFS_Idle
+                                                       tonClosePulse.Q -> eVFS_CloseWait
+     eVFS_CloseWait    none                            i_xClsLS -> eVFS_Idle
+                                                       tonCloseTimeout.Q -> eVFS_ClsTimeout
+     eVFS_OpnTimeout   none (open solenoid released)   xCloseReq -> eVFS_Closing
+                                                       i_xVAC_FAULT_Reset -> eVFS_Idle
+     eVFS_ClsTimeout   none                            i_xClsLS -> eVFS_Idle
+                                                       i_xVAC_FAULT_Reset -> eVFS_Idle
+   ---------------------------------------------------------------------------------- *)
+q_xOPN_DO := FALSE;
+q_xClose_A := FALSE;
+q_xClose_B := FALSE;
+q_xClose_C := FALSE;
+
+CASE eState OF
+    E_VFS_State.eVFS_Idle:
+        (* no command: the shutter is resting at one of the limit switches *)
+        IF xCloseReq THEN
+            eState := E_VFS_State.eVFS_Closing;
+        ELSIF xOpenReq THEN
+            eState := E_VFS_State.eVFS_Opening;
+        END_IF
+
+    E_VFS_State.eVFS_Opening:
+        (* energize the open solenoid and wait for the open limit switch *)
+        q_xOPN_DO := TRUE;
+        IF xCloseReq THEN
+            eState := E_VFS_State.eVFS_Closing;
+        ELSIF i_xOpnLS THEN
+            eState := E_VFS_State.eVFS_OpenSeat;
+        ELSIF tonOpenTimeout.Q THEN
+            (* bounded wait expired: release the solenoid and latch the fault *)
+            eState := E_VFS_State.eVFS_OpnTimeout;
+        END_IF
+
+    E_VFS_State.eVFS_OpenSeat:
+        (* open limit switch made: hold the open solenoid for tOpenSeatDuration *)
+        q_xOPN_DO := TRUE;
+        IF xCloseReq THEN
+            eState := E_VFS_State.eVFS_Closing;
+        ELSIF NOT i_xOpnLS THEN
+            (* lost the open limit switch: seat it again *)
+            eState := E_VFS_State.eVFS_Opening;
+        ELSIF tonOpenSeat.Q THEN
+            (* seated: release the solenoid and consume the EPICS open command *)
+            i_xOPN_SW := FALSE;
+            eState := E_VFS_State.eVFS_Open;
+        END_IF
+
+    E_VFS_State.eVFS_Open:
+        (* shutter open, open solenoid released, waiting for the next command *)
+        IF xCloseReq THEN
+            eState := E_VFS_State.eVFS_Closing;
+        END_IF
+
+    E_VFS_State.eVFS_Closing:
+        (* pulse the close solenoids for tClosePulseDuration *)
+        IF i_xClsLS THEN
+            eState := E_VFS_State.eVFS_Idle;
+        ELSE
+            q_xClose_A := TRUE;
+            q_xClose_B := TRUE;
+            q_xClose_C := TRUE;
+            IF tonClosePulse.Q THEN
+                eState := E_VFS_State.eVFS_CloseWait;
+            END_IF
+        END_IF
+
+    E_VFS_State.eVFS_CloseWait:
+        (* pulse finished: wait for the close limit switch, bounded *)
+        IF i_xClsLS THEN
+            eState := E_VFS_State.eVFS_Idle;
+        ELSIF tonCloseTimeout.Q THEN
+            eState := E_VFS_State.eVFS_ClsTimeout;
+        END_IF
+
+    E_VFS_State.eVFS_OpnTimeout:
+        (* LATCHED: the open limit switch was not made within tOPNTimeOutDuration.
+           The open solenoid is released (its safe state). Acknowledge with the vacuum
+           fault reset input, or let a close request take over. *)
+        IF xCloseReq THEN
+            eState := E_VFS_State.eVFS_Closing;
+        ELSIF i_xVAC_FAULT_Reset THEN
+            eState := E_VFS_State.eVFS_Idle;
+        END_IF
+
+    E_VFS_State.eVFS_ClsTimeout:
+        (* LATCHED: the close limit switch was not made within tCLSTimeOutDuration.
+           The close pulse is not repeated automatically: the close coils are pulse
+           rated, so re-pulsing them every scan chatters them and holding them
+           energized exceeds their duty cycle. Acknowledge with the vacuum fault reset
+           input; if the close demand is still present the sequence then retries. *)
+        IF i_xClsLS THEN
+            (* the switch finally made: the timeout is resolved *)
+            eState := E_VFS_State.eVFS_Idle;
+        ELSIF i_xVAC_FAULT_Reset THEN
+            eState := E_VFS_State.eVFS_Idle;
+        END_IF
+END_CASE
+
+(* Transition counter: +1 per state change, saturating at the UINT limit. Diagnostic
+   only: it makes the number of sequence steps and re-entries visible online. *)
+IF eState <> eStatePrev THEN
+    IF nStep < 65535 THEN
+        nStep := nStep + 1;
+    END_IF
+    eStatePrev := eState;
 END_IF
 
-//Set Valve close signals to FALSE when close timer expires or close limit switch is closed
-IF(CloseTimer.Q) OR (i_xClsLS) THEN
-    q_xClose_A := FALSE;
-    q_xClose_B := FALSE;
-    q_xClose_C := FALSE;
-    xClose := FALSE;
-    //i_xOPN_SW := FALSE;
-END_IF
-
-//Set Valve open signal to FALSE when open timer expires or open limit switch is closed
-IF(OpenTimer.Q) AND (i_xOpnLS) THEN
-    q_xOPN_DO :=  FALSE;
-    i_xOPN_SW := FALSE;
-    xOpen := FALSE;
-END_IF
+(* Sequence timers - called every scan, driven by the state the CASE machine was in.
+   The one-scan lag between entering a state and starting its timer is intentional and
+   resets every timer as soon as its state is left. *)
+tonOpenTimeout(IN := (eState = E_VFS_State.eVFS_Opening), PT := tOPNTimeOutDuration);
+tonOpenSeat(IN := (eState = E_VFS_State.eVFS_OpenSeat), PT := tOpenSeatDuration);
+tonClosePulse(IN := (eState = E_VFS_State.eVFS_Closing), PT := tClosePulseDuration);
+tonCloseTimeout(IN := (eState = E_VFS_State.eVFS_CloseWait), PT := tCLSTimeOutDuration);
 
 (*Neighboring Valves Interlock bit is reset When the Vacuum event error is reset and the Shutter is opened*)
 IF ((NOT xTrigger) OR xVeto) AND (NOT xERR_ExtFault) AND i_xOpnLS THEN
     q_xVAC_FAULT_OK := TRUE;
 END_IF
 
-(*OPN OK evaluation bit*)
-xOPN_OK := (NOT xERR_ExtFault) AND (NOT xTrigger OR xVeto) ;
-
-(*When the valve  is open MPS is OK*)
+(*When the valve is open MPS is OK*)
 //q_xMPS_OK := i_xOpnLS AND ((NOT xTrigger AND i_xPress_OK) OR xVeto)  AND NOT(i_xCLS_SW);
 q_xMPS_OK := i_xOpnLS AND (NOT xTrigger OR xVeto) AND NOT(i_xCLS_SW);
 
@@ -238,36 +397,25 @@ rtOK (CLK := tonDelOK.Q);
 
 IF rtOK.Q AND i_xOverrideOpen THEN
     i_xOverrideOpen := FALSE;
-    //if (i_xOpnLS) AND (i_xOverrideMode) THEN i_xOPN_SW := TRUE; END_IF //for seamless transition
     //Log
-    fbLogger(sMsg := 'Override expired', eSevr := TcEventSeverity.Warning);
+    fbLogger(sMsg :='Override expired', eSevr := TcEventSeverity.Warning);
 END_IF
 
 //Override timer
 tonOvrd(IN := i_xOverrideOpen, PT := tOvrd);
 
-
-//Assign valve state
+(* Publish the sequence status in the existing E_VGC vocabulary (EPICS/pytmc contract) *)
 IF (xTrigger) THEN
     q_eVFS_State := E_VGC.Triggered;
 ELSIF xERR_ExtFault THEN
     q_eVFS_State :=  E_VGC.Vac_Fault;
-ELSIF NOT i_xClsLS AND tCLStimeout.Q THEN
+ELSIF eState = E_VFS_State.eVFS_ClsTimeout THEN
     q_eVFS_State :=  E_VGC.Cls_Timeout;
-ELSIF NOT i_xOpnLS AND tOPNtimeout.Q THEN
+ELSIF eState = E_VFS_State.eVFS_OpnTimeout THEN
     q_eVFS_State :=  E_VGC.Opn_Timeout;
 ELSE
     q_eVFS_State :=  E_VGC.At_Vac;
 END_IF
-
-(*Timers*)
-CloseTimer (IN := xClose, PT := TimDur);
-OpenTimer (IN := i_xOpnLS, PT := OpenTimDur);
-tOPNtimeout (IN := q_xOPN_DO, PT := tOPNTimeOutDuration);
-tCLStimeout (IN := q_xClose_A, PT := tCLSTimeOutDuration);
-
-//Detecting rising edge for i_xOPN_SW (epics command)
-rtOPN_SW (CLK := i_xOPN_SW);
 
 (*Gauge fault counters*)
 rtResetFaultCounter(CLK := i_ResetFaultCounter);
