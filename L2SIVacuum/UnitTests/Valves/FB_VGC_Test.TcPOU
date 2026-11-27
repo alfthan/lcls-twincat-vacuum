@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VGC_Test" Id="{f7068602-850f-4f85-937b-c57c62973b92}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK FB_VGC_Test EXTENDS TcUnit.FB_TestSuite
@@ -7,10 +7,15 @@ END_VAR
 VAR_OUTPUT
 END_VAR
 VAR
+    (* Device under test *)
     VGC: FB_VGC;
+    (* Simulated upstream (US) and downstream (DS) ion gauges *)
     US_IG : ST_VG;
     DS_IG : ST_VG;
+    (* Fast fault hardware output and PMPS arbiter needed by the FB_VGC interface.
+    Neither is exercised here, the tests drive the vacuum interlock of FB_VGC *)
     io_fbFFHWO    :    FB_HardwareFFOutput;
+    fbArbiter     :    FB_Arbiter;
     TotalTests : INT:=0;
     ex               : __SYSTEM.ExceptionCode;
 END_VAR
@@ -30,119 +35,155 @@ END_VAR
     </Method>
     <Method Name="M_INIT" Id="{872ba40e-8e0d-4855-ae6d-7645f3617e36}">
       <Declaration><![CDATA[METHOD M_INIT : BOOL
-VAR//_INPUT
-
-END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[TEST('VGC_Startup');
+        <ST><![CDATA[// VGC_Startup: both gauges at vacuum, permits made and no open command.
+// FB_VGC must stay closed and report the vacuum interlock as satisfied.
+TEST('VGC_Startup');
+// Both gauges at vacuum and their readings valid
 This^.US_IG.rPRESS := 1E-9;
 This^.US_IG.xPRESS_OK := TRUE;
-This^.US_IG.xAT_VAC := TRUE;
-
 This^.DS_IG.rPRESS := 1E-9;
 This^.DS_IG.xPRESS_OK := TRUE;
-
-(*This^.VGC(
-    i_stUSG:= This^.US_IG,
-    i_stDSG:= This^.DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= TRUE ,
-    //i_xPMPS_OK:= TRUE,
-    i_xExt_OK:= TRUE,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= This^.io_fbFFHWO,
-    fbArbiter:=g_fbArbiter);
-*)
+// No open command is present
+This^.VGC.M_Set_OPN_SW(FALSE);
+// First cycle: clear any alarm latched by an earlier run and let FB_VGC load
+// its persistent data, so the setpoints can be pinned afterwards and the test
+// does not depend on the stored configuration
+This^.VGC.iq_stValve.pv_xAlmRst := TRUE;
+This^.M_Run_Cycle(1);
+This^.VGC.M_SetAtVacSP(1E-6);
+// The block recomputes its hysteresis from the new setpoint in the following
+// cycle, so pin it after that cycle and let the state settle over the rest
+This^.M_Run_Cycle(1);
+This^.VGC.M_SetAtVacSPHys(8E-7);
+This^.M_Run_Cycle(3);
 AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
-AssertFalse(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
-TEST_FINISHED_NAMED('VGC_Startup');
-
-
-
-
-
-
-
-
-]]></ST>
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
+AssertTrue(This^.VGC.iq_stValve.xAT_VAC,'VGC xAT_VAC is set to false');
+AssertTrue(This^.VGC.iq_stValve.xOPN_OK,'VGC xOPN_OK is set to false');
+AssertTrue(This^.VGC.iq_stValve.eVGC_State = E_VGC.AtVacuum,'VGC eVGC_State is not AtVacuum');
+TEST_FINISHED_NAMED('VGC_Startup');]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_Interlock" Id="{35580cdf-b62c-4fb5-b5f0-7ced6771af19}">
       <Declaration><![CDATA[METHOD M_Interlock : BOOL
-VAR//_INPUT
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// VGC_Interlock_Active: the upstream gauge rises above the at-vacuum setpoint,
+// so the vacuum interlock is not satisfied. The valve must stay closed and the
+// open command must be dropped instead of being latched.
+TEST('VGC_Interlock_Active');
+This^.US_IG.rPRESS := 1E-3;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
+This^.DS_IG.xPRESS_OK := TRUE;
+// Open is requested although the interlock is not satisfied
+This^.VGC.M_Set_OPN_SW(TRUE);
+// One cycle: the command must be refused immediately
+This^.M_Run_Cycle(1);
+AssertFalse(This^.VGC.iq_stValve.xAT_VAC,'VGC xAT_VAC is set to true');
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK,'VGC xOPN_OK is set to true');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
+// Several more cycles: the refused command must not reappear
+This^.M_Run_Cycle(5);
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK,'VGC xOPN_OK is set to true');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
+// Back to a known safe state for the next test: gauges at vacuum and the
+// latched alarm cleared through the normal reset. The valve limit switches are
+// unlinked in this test project, so FB_VGC sees no confirmed closed position
+// and latches its lost-vacuum alarm when at-vacuum drops.
+This^.US_IG.rPRESS := 1E-9;
+This^.VGC.iq_stValve.pv_xAlmRst := TRUE;
+This^.M_Run_Cycle(3);
+AssertTrue(This^.VGC.iq_stValve.xAT_VAC,'VGC xAT_VAC is set to false');
+AssertFalse(This^.VGC.iq_stValve.xERR_SP,'VGC xERR_SP is still latched');
+TEST_FINISHED_NAMED('VGC_Interlock_Active');
 
+// VGC_Interlock_OK: both gauges at vacuum, so the vacuum interlock is
+// satisfied and the open command must be accepted and held.
+TEST('VGC_Interlock_OK');
+This^.US_IG.rPRESS := 1E-9;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
+This^.DS_IG.xPRESS_OK := TRUE;
+This^.VGC.M_Set_OPN_SW(TRUE);
+// One cycle: the valve must be commanded open
+This^.M_Run_Cycle(1);
+AssertTrue(This^.VGC.iq_stValve.xOPN_OK,'VGC xOPN_OK is set to false');
+AssertTrue(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to false');
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to false');
+// Several more cycles: the valve must stay commanded open while the interlock holds
+This^.M_Run_Cycle(5);
+AssertTrue(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW dropped while the interlock is OK');
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO dropped while the interlock is OK');
+TEST_FINISHED_NAMED('VGC_Interlock_OK');
+
+// VGC_Interlock_Lost: the upstream gauge rises above the at-vacuum setpoint
+// while the valve is open. The vacuum interlock is lost, so the valve must
+// close and stay closed.
+TEST('VGC_Interlock_Lost');
+This^.US_IG.rPRESS := 1E-3;
+This^.US_IG.xPRESS_OK := TRUE;
+// One cycle: the open command must be dropped and the output de-energised
+This^.M_Run_Cycle(1);
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK,'VGC xOPN_OK is set to true');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
+// Several more cycles: the valve must stay closed while the interlock is lost
+This^.M_Run_Cycle(5);
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
+// Leave a known safe state behind: gauges at vacuum and the latched alarm reset
+This^.US_IG.rPRESS := 1E-9;
+This^.VGC.iq_stValve.pv_xAlmRst := TRUE;
+This^.M_Run_Cycle(3);
+AssertTrue(This^.VGC.iq_stValve.xAT_VAC,'VGC xAT_VAC is set to false');
+AssertFalse(This^.VGC.iq_stValve.xERR_SP,'VGC xERR_SP is still latched');
+TEST_FINISHED_NAMED('VGC_Interlock_Lost');]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Run_Cycle" Id="{9c2f4b61-5d3e-4a7c-8b1e-2f6d0c4a7b93}">
+      <Declaration><![CDATA[METHOD M_Run_Cycle : BOOL
+VAR_INPUT
+    i_nCycles : INT := 1; // Number of simulated PLC cycles to execute
+END_VAR
+VAR
+    nCycle : INT;
+    nCycles : INT;
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[// Test interlock is active and attempting to open valve
-TEST('VGC_Interlock_Active');
-This^.US_IG.xPRESS_OK := FALSE;
-This^.DS_IG.xPRESS_OK := FALSE;
-VGC.M_Set_OPN_SW(TRUE);
-// run the function block one more time
-(*VGC(
-    i_stUSG:= US_IG,
-    i_stDSG:= DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= TRUE ,
-    i_xPMPS_OK:= TRUE ,
-    i_xExt_OK:= TRUE,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= io_fbFFHWO);*)
-AssertFalse(VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
-AssertFalse(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
-TEST_FINISHED_NAMED('VGC_Interlock_Active');
-// Test interlock is not active and attempting to open valve
-TEST('VGC_Interlock_OK');
-This^.US_IG.xPRESS_OK := TRUE;
-This^.DS_IG.xPRESS_OK := TRUE;
-VGC.M_Set_OPN_SW(TRUE);
-// run the function block one more time
-(*VGC(
-    i_stUSG:= US_IG,
-    i_stDSG:= DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= ,
-    i_xPMPS_OK:= ,
-    i_xExt_OK:= ,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= io_fbFFHWO);*)
-AssertTrue(VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to false');
-AssertTrue(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to false');
-TEST_FINISHED_NAMED('VGC_Interlock_OK');
-// Test interlock ok lost while valve is open
-TEST('VGC_Interlock_Lost');
-This^.US_IG.xPRESS_OK := False;
-This^.DS_IG.xPRESS_OK := TRUE;
-// run the function block one more time
-(*VGC(
-    i_stUSG:= US_IG,
-    i_stDSG:= DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= ,
-    i_xPMPS_OK:= ,
-    i_xExt_OK:= ,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= io_fbFFHWO);*)
-AssertFalse(VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
-AssertFalse(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
-TEST_FINISHED_NAMED('VGC_Interlock_Lost');
+        <ST><![CDATA[// Simulates PLC cycles: FB_VGC is invoked once per cycle with the gauge,
+// permit and command inputs prepared by the calling test, so that the command
+// and interlock transitions are evaluated cycle by cycle as they are on the
+// real controller. All external permits are held TRUE, the tests exercise the
+// vacuum (at-vacuum / differential pressure) interlock inside FB_VGC.
+nCycles := i_nCycles;
+IF nCycles < 1 THEN
+    nCycles := 1;
+END_IF
 
+FOR nCycle := 1 TO nCycles DO
+    This^.VGC(
+        i_stUSG := This^.US_IG,
+        i_stDSG := This^.DS_IG,
+        i_xDis_DPIlk := FALSE,
+        i_xPMPS_OK := TRUE,
+        i_xEPS_OK := TRUE,
+        i_xExt_OK := TRUE,
+        i_xOverrideMode := FALSE,
+        i_xReset := FALSE,
+        i_xIsAperture := FALSE,
+        i_sDevName := 'VGC_Test',
+        i_nTransitionRootID := 1000,
+        io_fbFFHWO := This^.io_fbFFHWO,
+        fbArbiter := This^.fbArbiter);
+END_FOR
 
-]]></ST>
+M_Run_Cycle := TRUE;]]></ST>
       </Implementation>
     </Method>
   </POU>
