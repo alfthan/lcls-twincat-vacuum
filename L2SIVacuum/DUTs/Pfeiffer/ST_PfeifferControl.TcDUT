@@ -1,7 +1,34 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_PfeifferControl" Id="{731036f1-36a4-4d41-854c-61674db7f8df}">
-    <Declaration><![CDATA[TYPE ST_PfeifferControl :
+    <Declaration><![CDATA[(*
+    ST_PfeifferControl
+
+    Purpose:
+        Control interface for one Pfeiffer turbo pump (HiPace series with onboard
+        controller) attached over RS-485. It carries every command the PLC can send to
+        the pump; the matching readbacks live in ST_PfeifferStatus.
+
+    Usage:
+        Embedded in ST_PfeifferPTM (see FB_PTM_Pfeiffer) and handed as VAR_IN_OUT to
+        FB_PfeifferSerialDriver through FB_PFEIFFER_TO_PTM. The members are
+        level-sensitive requests, not edges: the polling driver compares each one with
+        the value read back from the pump and writes the pump parameter only when the
+        two disagree.
+
+    Objectives:
+        - keep every pump command explicit and individually exposed to EPICS
+        - name each member after the Pfeiffer protocol parameter it maps to; the _nnn
+          suffix is the vendor parameter number (e.g. _027 is parameter 27)
+        - keep interlock evaluation out of this structure: xIlk and xPumpingStation_010
+          are plain inputs supplied by the caller
+
+    History:
+        2025-08-22  merged from the L2SI vacuum serial drivers (commit 2c3ce2b)
+        2026-11-27  added this header and the missing iGasMode_027 / xSetSpdMode_026
+                    documentation (audit finding #553)
+*)
+TYPE ST_PfeifferControl :
 STRUCT
     /// enables communication
     {attribute 'pytmc' := '
@@ -38,6 +65,10 @@ STRUCT
     pv: GAS_MODE;
     io: io;
     '}
+    /// gas mode (Pfeiffer parameter 027): the pump's gas-mode selection, sent
+    /// verbatim to the pump whenever it differs from ST_PfeifferStatus.iGasMode_027;
+    /// the pump protocol defines the values (0 = heavy gases, 1 = light gases) and
+    /// they are not range-checked here
     iGasMode_027: INT;
     /// interlock bit
      {attribute 'pytmc' := '
@@ -61,6 +92,12 @@ STRUCT
     xErrorAck_009: BOOL;
     /// power consumption setting in % (normally 100%)
     uiPowerPct_708: UINT;
+    /// rotation speed setting mode request (Pfeiffer parameter 026), sourced from
+    /// ST_PfeifferPTM.q_bSetSpd / PV SET_SPEED_MODE: TRUE requests the pump to take
+    /// its speed setpoint from parameter 707 (iSetRotationSpeed_707, in % of nominal
+    /// speed), FALSE requests 0 (rotation speed setting mode off). The matching
+    /// serial write (FB_PfeifferSerialDriver step 110) is currently unreachable, so
+    /// the bit is carried by the interface without effect today
     xSetSpdMode_026: BOOL;
 END_STRUCT
 END_TYPE

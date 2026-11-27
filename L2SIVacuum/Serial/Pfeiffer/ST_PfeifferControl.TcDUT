@@ -1,7 +1,30 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject>
   <DUT Name="ST_PfeifferControl" Id="{ec919d00-2da6-432b-be25-a78e8e56d132}">
-    <Declaration><![CDATA[TYPE ST_PfeifferControl :
+    <Declaration><![CDATA[(*
+    ST_PfeifferControl
+
+    Purpose:
+        Control interface for one Pfeiffer turbo pump attached over RS-485. This is the
+        legacy (uncompiled) copy of L2SIVacuum/DUTs/Pfeiffer/ST_PfeifferControl.TcDUT,
+        kept under L2SIVacuum/Serial; the compiled interface, which the Pfeiffer serial
+        driver and FB_PTM_Pfeiffer actually use, is the DUTs/Pfeiffer one.
+
+    Usage:
+        Not built - L2SIVacuum.plcproj compiles DUTs\Pfeiffer\ST_PfeifferControl.TcDUT,
+        not this file. Retained for reference only; do not extend it.
+
+    Objectives:
+        - record the original reduced command set (no gas-mode/speed-mode/PV pragmas)
+        - keep the member naming scheme of the compiled DUT: the _nnn suffix is the
+          Pfeiffer protocol parameter number
+
+    History:
+        2025-08-22  merged from the L2SI vacuum serial drivers (commit 2c3ce2b)
+        2026-11-27  added this header and the missing iGasMode_027 documentation
+                    (audit finding #553)
+*)
+TYPE ST_PfeifferControl :
 STRUCT
     /// enables communication
     xEnableComm: BOOL;
@@ -11,6 +34,8 @@ STRUCT
     xPumpingStation_010: BOOL;
     /// RUN_DO bit
     xMotorPump_023: BOOL;
+    /// gas mode (Pfeiffer parameter 027): the pump's gas-mode selection; the pump
+    /// protocol defines the values (0 = heavy gases, 1 = light gases)
     iGasMode_027: INT;
     /// interlock bit
     xIlk: BOOL;
