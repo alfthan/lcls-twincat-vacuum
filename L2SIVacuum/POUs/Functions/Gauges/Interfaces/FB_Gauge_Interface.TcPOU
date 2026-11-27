@@ -8,7 +8,24 @@ FUNCTION_BLOCK FB_Gauge_Interface
 VAR_INPUT
 END_VAR
 VAR_OUTPUT
-    {attribute 'pytmc' := 'pv:'}
+    (* Gauge status interface published to EPICS.
+       The pv name is deliberately left empty: pytmc builds each record
+       name from the pv of the matching ST_VG member (PRESS, AT_VAC,
+       PRESS_OK, STATE, HV_SW, VAC_SP, ...) and takes the record prefix
+       from the pytmc pragma of the instance that declares this block, so
+       the one library block serves every gauge interface. Naming this
+       container would insert an extra path segment and rename every
+       published gauge PV.
+       The io declared here is 'i' (read-only) because the block copies
+       the status it receives from the partner PLC into the struct each
+       scan. ST_VG members that are real EPICS controls (HV_SW, Auto_On,
+       VAC_SP, PRO_SP, SP_HYS, LOGGER) declare their own io: io there and
+       keep it: a member's pragma overrides this container default. *)
+    {attribute 'pytmc' := '
+    pv:
+    io: i;
+    field: DESC Gauge interface status copied from the partner PLC;
+    '}
     VG : ST_VG;
 END_VAR
 VAR
