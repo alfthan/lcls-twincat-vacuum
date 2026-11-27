@@ -50,7 +50,11 @@ END_IF
 
 
 (* Pressure OK check *)
-PG.xPRESS_OK := (PG.rPRESS >= MinPressure);
+(* PG.xPRESS_OK is a permit/health flag, so it is asserted only while eState reports
+   a valid reading. Gating on eState forces it FALSE on GaugeDisconnected, on OoR and
+   on the first scan, where PG.rPRESS still holds the last valid reading and a bare
+   rPRESS comparison would leave the permit asserted while the device is invalid. *)
+PG.xPRESS_OK := ((PG.eState = Valid) OR (PG.eState = ValidLo)) AND (PG.rPRESS >= MinPressure);
 
 (*Soft IO Mapping*)
 ACT_IO();
