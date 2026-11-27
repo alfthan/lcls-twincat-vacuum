@@ -22,6 +22,7 @@ END_VAR
 (* scan the pumps one at a time *)//MG???
 fbTD20SerialDriver(
     i_xExecute:= TRUE,
+    i_xAcknowledge:= FALSE,
     i_tTimeOut:= tTimeOut,
     i_wControlWord:= 16#0000,
     iq_stSerialRXBuffer:= SerialRXBuffer,
@@ -35,8 +36,12 @@ fbTD20SerialDriver(
 IF fbTD20SerialDriver.q_xDone
     OR fbTD20SerialDriver.q_xError
     OR fbTD20SerialDriver.q_xTimeout THEN
-        (* reset for next time *)
-        fbTD20SerialDriver(i_xExecute:= FALSE, iq_stSerialRXBuffer:= SerialRXBuffer, iq_stSerialTXBuffer:= SerialTXBuffer);
+        (* acknowledge the latched result and reset for next time *)
+        fbTD20SerialDriver(
+            i_xExecute:= FALSE,
+            i_xAcknowledge:= TRUE,
+            iq_stSerialRXBuffer:= SerialRXBuffer,
+            iq_stSerialTXBuffer:= SerialTXBuffer);
 END_IF
 
 

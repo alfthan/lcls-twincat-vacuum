@@ -5,6 +5,8 @@
 VAR_INPUT
     /// rising edge execute
     i_xExecute: BOOL;
+    /// rising edge acknowledge: clears the latched q_xDone/q_xError result
+    i_xAcknowledge: BOOL;
     /// RS-485 Addrress of Pump, 0 if RS-232
     i_bAddress: BYTE;
     /// PKE Parameter number and type of access
@@ -54,6 +56,7 @@ VAR_IN_OUT
 END_VAR
 VAR
     rtExecute: R_TRIG;
+    rtAcknowledge: R_TRIG;
     iStep: INT;
     fbClearComBuffer: ClearComBuffer;
     tonTimeout: TON;
@@ -69,9 +72,25 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with an Oerlikon TD20 *)
+(* History:
+   2026-11-27 - hold q_xDone/q_xError in the terminal states until they are
+                acknowledged instead of dropping them when i_xExecute falls.
+*)
 
-(* rising edge trigger *)
+(* rising edge triggers *)
 rtExecute(CLK:= i_xExecute);
+rtAcknowledge(CLK:= i_xAcknowledge);
+
+(* an acknowledge clears the latched result and returns the block to idle *)
+IF rtAcknowledge.Q THEN
+    q_xDone := FALSE;
+    q_xError := FALSE;
+    q_xTimeout := FALSE;
+    q_sResult := '';
+    iStep := 0;
+END_IF
+
+(* a new command clears the result of the previous transaction *)
 IF rtExecute.Q THEN
     q_xDone	:= FALSE;
     q_xError := FALSE;
@@ -202,13 +221,10 @@ CASE iStep OF
             END_IF
         END_IF
 
-    100: (* done *)
-        IF  i_xExecute = FALSE THEN
-            q_xDone:= FALSE;
-            iStep := 0;
-        END_IF
+    100: (* done - q_xDone stays latched until it is acknowledged *)
+        ;
 
-    9000:
+    9000: (* error - q_xError stays latched until it is acknowledged *)
         q_wPKE:= 0;
         q_dwPWE:= 0;
         q_wStatusWord:= 0;

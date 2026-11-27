@@ -91,16 +91,17 @@ q_sLastReceivedString := fbtrans.q_sLastReceivedString;]]></ST>
     </Implementation>
     <Action Name="a_ClearTrans" Id="{cbc46b91-bc1a-4d15-840f-cb6f0aaaf34d}">
       <Implementation>
-        <ST><![CDATA[(* Refactor this action to match your transaction *)
-fbtrans.i_xExecute := TRUE;
-fbtrans.i_sCmd:= '';
-fbtrans.i_sParam := '';
+        <ST><![CDATA[(* Acknowledge the transaction result: this clears its latched q_xDone/q_xError
+   and returns it to idle.  The acknowledge is pulsed so the next command
+   starts from a clean state. *)
+fbtrans.i_xExecute := FALSE;
+fbtrans.i_xAcknowledge := TRUE;
 fbTrans(
     i_iAddress:= iq_stLVC4000.iAddr,
     i_tTimeOut:= i_tTimeOut,
     iq_stSerialRXBuffer:= iq_stSerialRXBuffer,
     iq_stSerialTXBuffer:= iq_stSerialTXBuffer );
-fbtrans.i_xExecute := FALSE;
+fbtrans.i_xAcknowledge := FALSE;
 fbTrans(
     i_iAddress:= iq_stLVC4000.iAddr,
     i_tTimeOut:= i_tTimeOut,

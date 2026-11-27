@@ -5,6 +5,8 @@
 VAR_INPUT
     /// rising edge execute
     i_xExecute: BOOL;
+    /// rising edge acknowledge: clears the latched q_xDone/q_xError result
+    i_xAcknowledge: BOOL;
     /// Maximum wait time for reply
     i_tTimeOut: TIME := TIME#1s0ms;
     i_wControlWord: WORD;
@@ -26,6 +28,7 @@ VAR_IN_OUT
 END_VAR
 VAR
     rtExecute: R_TRIG;
+    rtAcknowledge: R_TRIG;
     rtTransDone: R_TRIG;
     iStep: INT;
     fbTD20Transaction: FB_TD20Transaction;
@@ -38,9 +41,25 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with a Oerlikon TD20 Pump controller *)
+(* History:
+   2026-11-27 - hold q_xDone/q_xError in the terminal states until they are
+                acknowledged instead of dropping them when i_xExecute falls.
+*)
 
-(* rising edge trigger *)
+(* rising edge triggers *)
 rtExecute(CLK:= i_xExecute);
+rtAcknowledge(CLK:= i_xAcknowledge);
+
+(* an acknowledge clears the latched result and returns the block to idle *)
+IF rtAcknowledge.Q THEN
+    q_xDone := FALSE;
+    q_xError := FALSE;
+    q_xTimeout := FALSE;
+    q_sResult := '';
+    iStep := 0;
+END_IF
+
+(* a new command clears the result of the previous poll *)
 IF rtExecute.Q  THEN
     q_xDone	:= FALSE;
     q_xError := FALSE;
@@ -53,14 +72,16 @@ CASE iStep OF
     0: (* idle *)
         ;
 
-    10: (* assure rising edge *)
+    10: (* assure rising edge and release the previous transaction result *)
         fbTD20Transaction.i_xExecute := FALSE;
+        fbTD20Transaction.i_xAcknowledge := TRUE;
         iStep := iStep + 10;
 
     20:(* get P20 *)
         fbTD20Transaction.i_wPKE := 16#1000 OR 20;
         fbTD20Transaction.i_bIND := 0;
         fbTD20Transaction.i_dwPWE := 0;
+        fbTD20Transaction.i_xAcknowledge := FALSE;
         fbTD20Transaction.i_xExecute := TRUE;
 
         IF fbTD20Transaction.q_xError THEN
@@ -69,6 +90,7 @@ CASE iStep OF
             iStep := 9000;
         ELSIF fbTD20Transaction.q_xDone THEN
             fbTD20Transaction.i_xExecute := FALSE;
+            fbTD20Transaction.i_xAcknowledge := TRUE;
             IF fbTD20Transaction.q_wPKE = (16#1000 OR 20) THEN
                 q_stStatus.wCriticalFreq_P20 := DWORD_TO_WORD(fbTD20Transaction.q_dwPWE);
                 iStep := iStep + 10;
@@ -82,6 +104,7 @@ CASE iStep OF
         fbTD20Transaction.i_wPKE := 16#1000 OR 21;
         fbTD20Transaction.i_bIND := 0;
         fbTD20Transaction.i_dwPWE := 0;
+        fbTD20Transaction.i_xAcknowledge := FALSE;
         fbTD20Transaction.i_xExecute := TRUE;
         IF fbTD20Transaction.q_xError THEN
             iCatch := iCatch +1;
@@ -89,6 +112,7 @@ CASE iStep OF
             iStep := 9000;
         ELSIF fbTD20Transaction.q_xDone THEN
             fbTD20Transaction.i_xExecute := FALSE;
+            fbTD20Transaction.i_xAcknowledge := TRUE;
             IF fbTD20Transaction.q_wPKE = (16#1000 OR 21) THEN
                 q_stStatus.wMaxCurrentFactor_P21 := DWORD_TO_WORD(fbTD20Transaction.q_dwPWE);
                 iStep := iStep + 10;
@@ -102,6 +126,7 @@ CASE iStep OF
         fbTD20Transaction.i_wPKE := 16#1000 OR 24;
         fbTD20Transaction.i_bIND := 0;
         fbTD20Transaction.i_dwPWE := 0;
+        fbTD20Transaction.i_xAcknowledge := FALSE;
         fbTD20Transaction.i_xExecute := TRUE;
         IF fbTD20Transaction.q_xError THEN
             iCatch := iCatch +1;
@@ -109,6 +134,7 @@ CASE iStep OF
             iStep := 9000;
         ELSIF fbTD20Transaction.q_xDone THEN
             fbTD20Transaction.i_xExecute := FALSE;
+            fbTD20Transaction.i_xAcknowledge := TRUE;
             IF fbTD20Transaction.q_wPKE = (16#1000 OR 24) THEN
                 q_stStatus.wSetpointFreq_P24 := DWORD_TO_WORD(fbTD20Transaction.q_dwPWE);
                 iStep := iStep + 10;
@@ -122,6 +148,7 @@ CASE iStep OF
         fbTD20Transaction.i_wPKE := 16#1000 OR 32;
         fbTD20Transaction.i_bIND := 0;
         fbTD20Transaction.i_dwPWE := 0;
+        fbTD20Transaction.i_xAcknowledge := FALSE;
         fbTD20Transaction.i_xExecute := TRUE;
         IF fbTD20Transaction.q_xError THEN
             iCatch := iCatch +1;
@@ -129,6 +156,7 @@ CASE iStep OF
             iStep := 9000;
         ELSIF fbTD20Transaction.q_xDone THEN
             fbTD20Transaction.i_xExecute := FALSE;
+            fbTD20Transaction.i_xAcknowledge := TRUE;
             IF fbTD20Transaction.q_wPKE = (16#1000 OR 32) THEN
                 q_stStatus.wMaxRunUpTime_P32 := DWORD_TO_WORD(fbTD20Transaction.q_dwPWE);
                 iStep := iStep + 10;
@@ -142,6 +170,7 @@ CASE iStep OF
         fbTD20Transaction.i_wPKE := 16#6000 OR 171;
         fbTD20Transaction.i_bIND := 0;
         fbTD20Transaction.i_dwPWE := 0;
+        fbTD20Transaction.i_xAcknowledge := FALSE;
         fbTD20Transaction.i_xExecute := TRUE;
         IF fbTD20Transaction.q_xError THEN
             iCatch := iCatch +1;
@@ -149,6 +178,7 @@ CASE iStep OF
             iStep := 9000;
         ELSIF fbTD20Transaction.q_xDone THEN
             fbTD20Transaction.i_xExecute := FALSE;
+            fbTD20Transaction.i_xAcknowledge := TRUE;
             IF fbTD20Transaction.q_wPKE = (16#4000 OR 171) THEN
                 q_stStatus.wErrorCode_P171 := DWORD_TO_WORD(fbTD20Transaction.q_dwPWE);
                 iStep := 8000;
@@ -158,17 +188,13 @@ CASE iStep OF
             END_IF
         END_IF
 
-    8000: (* done *)
+    8000: (* done - q_xDone stays latched until it is acknowledged *)
         q_xDone := TRUE;
-        IF  i_xExecute = FALSE THEN
-            q_xDone:= FALSE;
-            iStep := 0;
-        END_IF
 
-    9000: (* Transaction Error *)
+    9000: (* Transaction Error - q_xError stays latched until it is acknowledged *)
         q_xError := TRUE;
 
-    9100: (* Driver Error *)
+    9100: (* Driver Error - q_xError stays latched until it is acknowledged *)
         q_xError := TRUE;
 
 END_CASE
