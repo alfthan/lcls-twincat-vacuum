@@ -1,7 +1,46 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_KashiyamaDryPump" Id="{ea7dbd39-0b45-44ec-97c9-3ee5cc59d920}">
-    <Declaration><![CDATA[TYPE ST_KashiyamaDryPump EXTENDS ST_RoughPump:
+    <Declaration><![CDATA[(* ST_KashiyamaDryPump : interface structure for a Kashiyama dry (roughing) pump.
+   See HISTORY at the end of this block for the author/date line.
+
+   PURPOSE:
+     Device-model interface for one Kashiyama dry pump of the L2SI vacuum PLC.
+     It extends the generic ST_RoughPump archetype (run command, interlock and
+     status flags, warning/error and pump state) with the Kashiyama specific
+     command outputs, field status inputs, EPICS switches and the pressure /
+     ready-delay setpoints that the pump function blocks and the Kashiyama
+     gate-valve permit consume.
+
+   USAGE:
+     Published as q_stPump (VAR_OUTPUT) of FB_KashiyamaPump and
+     FB_KashiyamaPump_G, and passed as the Pump input of FB_Kashiyama_VRC.
+     Each member's pytmc pragma gives its PV: 'io: i' members are read-only
+     status in EPICS, 'io: io' members are EPICS command switches. Inherited
+     members (pv_xRunSW, q_xRunDo, xIlkOK, xExtIlk, xAtSpd, xWrn, iWrn, xErr,
+     iErr, eState) are documented on ST_RoughPump, not here.
+
+   OBJECTIVES:
+     - One interface struct per device model, so a consumer wires a single
+       struct instead of individual IO symbols.
+     - Every EPICS-exposed member states the meaning and polarity of its PV
+       (ZNAM/ONAM where relevant), so generated records cannot be mis-wired.
+     - No member is left without a documented meaning, polarity and unit, so
+       the reset / speed / remote commands and the alarm / OK inputs are
+       unambiguous for PLC and EPICS consumers alike.
+     - Faulted and not-ready status stays available to interlocks through
+       i_xAlarmOK, i_xWarningOK, i_xIsRun and RdyTmr.
+
+   HISTORY:
+     2026-11-27  Comment-standard pass: added this header and a meaning /
+                 units comment on every member.
+                 Author: Scirix agent (task #44).
+     2026-04-24  Truman Paras <tparas@stanford.edu>: added the xRemoteSW /
+                 REMOTE_SW EPICS bool (commit f3e3634).
+     2020-01-28  ghalym <43865116+ghalym@users.noreply.github.com>: original
+                 Kashiyama dry-pump interface (commit 9684436).
+*)
+TYPE ST_KashiyamaDryPump EXTENDS ST_RoughPump:
 STRUCT
 
 (* Output *)
@@ -12,21 +51,26 @@ STRUCT
     field: ONAM TRUE;
     io: i
     '}
-    q_xResetDo	: 	BOOL;
+    q_xResetDo	: 	BOOL; // Pump fault-reset command output (TRUE = reset requested). Formed as
+    // xResetSW AND NOT i_xIsRun, so a reset is only ever pulsed while the pump is not running.
+    // Unitless flag.
     {attribute 'pytmc' := '
     pv: LSPD_DO;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: i
     '}
-    q_xLspdDo	: 	BOOL;
+    q_xLspdDo	: 	BOOL; // Low-speed (LSPD) command output to the pump (TRUE = low-speed mode
+    // requested). Mirrors xLspdSW while xLspd_IlkENA is TRUE and is forced FALSE otherwise.
+    // Unitless flag.
     {attribute 'pytmc' := '
     pv: REM_DO;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: i
     '}
-    q_xRemoteDo	: 	BOOL;
+    q_xRemoteDo	: 	BOOL; // Remote-mode command output to the pump (TRUE = remote control
+    // requested). Mirrors xRemoteSW in FB_KashiyamaPump_G. Unitless flag.
 
 (* Input *)
 {attribute 'pytmc' := '
@@ -35,7 +79,8 @@ STRUCT
     field: ONAM TRUE;
     io: i
     '}
-    i_xRemote	:	BOOL;
+    i_xRemote	:	BOOL; // Remote-mode status input from the pump (TRUE = pump is under remote
+    // control; a Kashiyama reports a high level when remote). Part of xIlkOK. Unitless flag.
 
     {attribute 'pytmc' := '
     pv: ALARM_OK;
@@ -43,25 +88,31 @@ STRUCT
     field: ONAM TRUE;
     io: i
     '}
-    i_xAlarmOK	:	BOOL;
+    i_xAlarmOK	:	BOOL; // Alarm status input from the pump (TRUE = no alarm / healthy, FALSE = pump
+    // alarm active). Part of xIlkOK and forces eState = pumpFAULT when FALSE. Unitless flag.
     {attribute 'pytmc' := '
     pv: WARN_OK;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: i
     '}
-    i_xWarningOK	:	BOOL;
+    i_xWarningOK	:	BOOL; // Warning status input from the pump (TRUE = no warning, FALSE = pump
+    // warning active). Part of xIlkOK. Unitless flag.
     {attribute 'pytmc' := '
     pv: RUN_DI;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: i
     '}
-    i_xIsRun		:	BOOL;
+    i_xIsRun		:	BOOL; // Run status input from the pump (TRUE = pump reports running). Used for the
+    // eState evaluation, to gate the reset pulse and to run the RdyTmr ready delay. Unitless flag.
 
 (* Logic status *)
 
-    xLspd_IlkENA:   BOOL;
+    xLspd_IlkENA:   BOOL; // Low-speed interlock enable, computed inside the FB and not a field
+    // signal: TRUE while a low-speed command is permitted (tied to q_xRunDO in FB_KashiyamaPump, to
+    // xIlkOK in FB_KashiyamaPump_G). While FALSE, xLspdSW is cleared and q_xLspdDo dropped.
+    // Unitless flag.
 
 (* EPICS *)
     //xRunSW		:	BOOL; in Rough PUMP
@@ -71,24 +122,36 @@ STRUCT
     field: ONAM TRUE;
     io: io
     '}
-    xResetSW	:	BOOL; //For resetting faults
+    xResetSW	:	BOOL; // EPICS/software reset request switch (TRUE = reset pump faults). Does not
+    // latch; gated with NOT i_xIsRun to form q_xResetDo. Unitless flag.
     {attribute 'pytmc' := '
     pv: LSPD_SW;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: io
     '}
-    xLspdSW     :   BOOL;
+    xLspdSW     :   BOOL; // EPICS/software low-speed request switch (TRUE = request low speed).
+    // Cleared by the FB whenever xLspd_IlkENA is FALSE. Unitless flag.
     {attribute 'pytmc' := '
     pv: REMOTE_SW;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: io
     '}
-    xRemoteSW     :   BOOL;
-    LowSP  :   REAL := 0.02; //Torr
-    HighSP :   REAL; //Torr
-    RdyTmr : REAL;
+    xRemoteSW     :   BOOL; // EPICS/software remote-mode request switch (TRUE = request remote
+    // control). Drives q_xRemoteDo in FB_KashiyamaPump_G. Unitless flag.
+
+(* Setpoints and timing *)
+    LowSP  :   REAL := 0.02; // Low (base) pressure setpoint, Torr: 0.02 Torr = 20 mTorr, the MU100
+    // base pressure of the main Kashiyama pump. FB_Kashiyama_VRC closes the gate valve once the
+    // chamber has stayed below it for 180 s.
+    HighSP :   REAL; // High (crossover) pressure setpoint, Torr: the FB_Kashiyama_VRC gate-valve
+    // permit requires the chamber pressure to be below it (600 Torr for the main Kashiyama pump) or
+    // low speed to be active.
+    RdyTmr : REAL; // Ready-delay countdown, in ms (TwinCAT 1 ms TIME base): remaining time of the
+    // internal 20 s run-ready timer, computed as TO_REAL(TON.PT) - TO_REAL(TON.ET) while i_xIsRun
+    // is TRUE. A value <= 0.0 means the pump has finished its ready delay; FB_Kashiyama_VRC
+    // requires it to open the gate valve.
 END_STRUCT
 END_TYPE
 ]]></Declaration>
