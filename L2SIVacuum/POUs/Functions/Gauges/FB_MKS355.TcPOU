@@ -4,6 +4,8 @@
     <Declaration><![CDATA[(* This function is for the Hot Cathode MKS 355.
 
 This function provides ILK and Set Point Protection for the hot Cathode.
+The site interlock is NOT evaluated here: the caller evaluates F_MKS355_ILK and wires the
+result into i_xILK_Permit, which gates IG.xILKOk and the HV output.
 *)
 
 FUNCTION_BLOCK FB_MKS355 EXTENDS FB_GaugeBase
@@ -11,7 +13,7 @@ VAR_IN_OUT
 
 END_VAR
 VAR_INPUT
-    PG	:	ST_VG;
+    i_xILK_Permit : BOOL := FALSE; // Interlock permit from F_MKS355_ILK; the only condition that can enable the HV output
     tRecoverDelay:TIME:=T#600S; (*Delay Time after the first cycle to start the device. Default is 600S*)
 END_VAR
 VAR_OUTPUT
@@ -89,23 +91,27 @@ END_IF
 
 
 (* Ion Gauge Protection Functions *)
-(* If the PG pressure is greater than the VG.PRO_SP then the gauge is disabled *)
-(* If the PG pressure is less than the VG.PRO_SP then the gauge is enabled *)
-(* This FB also implements some hysteresis so the gauge doesn't have rapid power cycling while near the turn on boundary *)
+(* Interlock policy (conv_0121ae615346): the site interlock comparing the backing gauge pressure
+   against the protection setpoint is evaluated by the caller in F_MKS355_ILK and supplied through
+   i_xILK_Permit. This block evaluates no site-specific interlock condition of its own. *)
 
 
-IF PG.rPRESS <= IG.rPRO_SP AND PG.xPRESS_OK THEN
-    IG.q_xHV_DIS := IG.xHV_SW;
-    IG.xILKOk := TRUE;
-ELSIF IG.q_xHV_DIS THEN
-    IF IG.rPRESS > (IG.rPRO_SP + IG.rHYS_PR)  OR PG.rPRESS > (IG.rPRO_SP + IG.rHYS_PR) THEN
-        IG.q_xHV_DIS := FALSE;
-        IG.xHV_SW := FALSE;
+IG.xILKOk := i_xILK_Permit; // The external permit is the only source of the interlock result
+
+IF NOT IG.xILKOk THEN
+    (* No permit: drop the enable request and never energize the HV output. *)
+    IF IG.q_xHV_DIS AND IG.xLog THEN
+        fbLogger(sMsg:='Ion gauge high voltage dropped: interlock permit not OK.', eSevr:=TcEventSeverity.Critical);
     END_IF
-ELSE
     IG.q_xHV_DIS := FALSE;
     IG.xHV_SW := FALSE;
-    IG.xILKOk := FALSE;
+ELSIF IG.rPRESS > (IG.rPRO_SP + IG.rHYS_PR) THEN
+    (* Device self-protection, documented device behaviour: a cold cathode extinguishes above
+       its own protection setpoint plus hysteresis. *)
+    IG.q_xHV_DIS := FALSE;
+    IG.xHV_SW := FALSE;
+ELSE
+    IG.q_xHV_DIS := IG.xHV_SW;
 END_IF
 
 (* Pressure gauge OK checks *)
@@ -130,10 +136,9 @@ ACT_Recover();]]></ST>
     <Action Name="ACT_Logger" Id="{70f6be0b-a0e5-4c53-876a-650c1a146e71}">
       <Implementation>
         <ST><![CDATA[// ILK logger
+(* A loss of the external interlock permit is logged in the protection block of the
+   implementation, where the HV output is dropped. *)
 IF (IG.xLog) THEN
-    IF NOT IG.xILKOk AND IG.q_xHV_DIS THEN
-            fbLogger(sMsg:='Lost external interlock while gauge was on.', eSevr:=TcEventSeverity.Critical);
-    END_IF
 
 
     // Log Action

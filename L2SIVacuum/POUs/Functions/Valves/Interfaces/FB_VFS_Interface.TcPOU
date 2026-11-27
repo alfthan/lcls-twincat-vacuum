@@ -7,6 +7,7 @@ FUNCTION_BLOCK FB_VFS_Interface EXTENDS FB_Valve
 VAR_INPUT
     IG : ST_VG; // The MKS422 Cold Cathode Data Structure
     Veto_Valve: ST_VGC;// The VGC structure for the Veto Valve
+    i_xILK_OK : BOOL := FALSE; // Interlock permit from F_VFS_ILK; the only source of ST_VFS.xOPN_OK
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -82,7 +83,10 @@ IF rtOK.Q AND q_xOverrideOpen THEN
     fbLogger(sMsg:='Override expired', eSevr:=TcEventSeverity.Warning);
 END_IF
 (*OPN OK evaluation bit *)
-xOPN_OK := (i_xVAC_FAULT_OK) AND (NOT i_xTrigger OR (q_xVetoValveClosed AND NOT q_xVetoValveOpenDO)) ;
+(* Site interlock policy (conv_0121ae615346): the condition (vacuum fault, fast trigger and veto
+   valve status) is evaluated by the caller in F_VFS_ILK and supplied through i_xILK_OK. This block
+   evaluates no site-specific interlock condition of its own. *)
+xOPN_OK := i_xILK_OK;
 (* Soft IO Mapping*)
 IO();
 (*Logger*)

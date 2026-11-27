@@ -2,11 +2,14 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PIP_Gamma" Id="{c735b214-fb8d-491c-9d35-e2f8609cfbf0}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the ION pump connected to a Gamma QPCe controller.
- Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr *)
+ Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr.
+ The interlock condition is NOT evaluated here: the caller evaluates F_PIP_Gamma_ILK and wires the
+ result into i_xILK_Permit, which is the only source of stPump.xILKOk and of the HV enable. *)
 {attribute 'reflection'}
 FUNCTION_BLOCK FB_PIP_Gamma Extends FB_Pump
 VAR_INPUT
-    i_stGauge	:	ST_VG; //Ion or Pirani gauge for pump interlock
+    i_stGauge	:	ST_VG; //Ion or Pirani gauge for pump interlock (informational, used for the device name; the ILK is evaluated in F_PIP_Gamma_ILK)
+    i_xILK_Permit : BOOL := FALSE; //Interlock permit from F_PIP_Gamma_ILK; the only condition that can enable the HV output
     i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum interlock logic*)
     tRecoverDelay:TIME:=T#900S; (*Delay Time after the first cycle to start the device. Default is 900S*)
 END_VAR
@@ -68,17 +71,19 @@ IF (stPump.rHVEna_SP > rDefaultHVEna_SP) THEN
 END_IF
 
 (* Interlock *)
-//stPump.xHV_ExtIlk  := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= stPump.rHVEna_SP);//AND NOT tPumpStartTimeout.Q); //ADP
+(* Site interlock policy (conv_0121ae615346): the condition that compares the interlock gauge
+   pressure against stPump.rHVEna_SP is evaluated by the caller in F_PIP_Gamma_ILK and supplied
+   through i_xILK_Permit. This block evaluates no site-specific interlock condition of its own;
+   stPump.xILKOk reports the external permit only. *)
+stPump.xILKOk := i_xILK_Permit;
 
 (* Enable HV *)
-IF i_stGauge.rPRESS <= stPump.rHVEna_SP AND i_stGauge.xPRESS_OK THEN
+IF stPump.xILKOk THEN
     stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
-    stPump.xILKOk:= TRUE;
 ELSIF stPump.q_xHVEna_DO (*AND timer.Q*) THEN
     IF q_IG.rPRESS > (stPump.rHVEna_SP + stPump.rHYS_PR) THEN // Ion pumps when running switches off based on their own pressure readings
         stPump.q_xHVEna_DO := FALSE;
         stPump.xHVEna_SW := FALSE;
-        stPump.xILKOk := FALSE;
     ELSE
         stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
     END_IF
@@ -87,7 +92,6 @@ ELSIF (tonOvrd.Q AND i_xOverrideMode) THEN
 ELSE
     stPump.q_xHVEna_DO  := FALSE;
     stPump.xHVEna_SW := FALSE;
-    stPump.xILKOk := FALSE;
 END_IF
 
 

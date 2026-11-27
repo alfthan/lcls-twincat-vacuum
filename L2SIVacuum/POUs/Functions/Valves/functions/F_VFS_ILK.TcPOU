@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_VFS_ILK" Id="{10638c4f-6951-4601-ad27-1c45ee45bc0a}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Evaluates the site interlock of the fast shutter valve (FB_VFS_Interface).
+
+ The reusable valve block FB_VFS_Interface no longer embeds this condition: it consumes
+ the result through its i_xILK_OK input, which gates ST_VFS.xOPN_OK and the override
+ qualification (conv_0121ae615346 - externalize interlocks behind a permit input and a
+ dedicated F_<Device>_ILK function).
+
+ Usage (wire the result into the permit input of the device block):
+     fbVFS.i_xILK_OK := F_VFS_ILK(i_xVAC_FAULT_OK   := i_xVAC_FAULT_OK,
+                                  i_xTrigger        := i_xTrigger,
+                                  i_xVetoValveClosed := stVetoValve.i_xClsLS,
+                                  i_xVetoValveOpenDO := stVetoValve.q_xOPN_DO);
+
+ Objectives:
+ - Return TRUE when the valve may be opened: the vacuum must be OK and either there is
+   no fast trigger, or the veto valve has already closed and is not being commanded open.
+ - Keep the site interlock condition out of the reusable valve block so it can be
+   reviewed, changed and tested in one place.
+ - Be independently reviewable and testable (see FB_DeviceILK_Test).
+
+ History: 2026-11-27 Scirix agent (task #80) - extracted from FB_VFS_Interface. *)
+
+FUNCTION F_VFS_ILK : BOOL
+VAR_INPUT
+    i_xVAC_FAULT_OK : BOOL; // Valve vacuum OK, FALSE when there is a vacuum fault
+    i_xTrigger : BOOL; // Fast trigger input, TRUE closes the valve
+    i_xVetoValveClosed : BOOL; // Veto valve closed limit switch
+    i_xVetoValveOpenDO : BOOL; // Veto valve open command
+END_VAR
+VAR
+    xTriggerVetoed : BOOL; // TRUE when the fast trigger is not yet covered by the veto valve
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* A fast trigger is only acceptable once the veto valve has closed and is no longer
+   being commanded open. *)
+xTriggerVetoed := i_xTrigger AND NOT (i_xVetoValveClosed AND NOT i_xVetoValveOpenDO);
+
+F_VFS_ILK := i_xVAC_FAULT_OK AND NOT xTriggerVetoed;
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

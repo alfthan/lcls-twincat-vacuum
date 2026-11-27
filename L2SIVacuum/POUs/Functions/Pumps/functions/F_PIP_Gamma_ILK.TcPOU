@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_PIP_Gamma_ILK" Id="{13ef8f9c-081c-4ac7-b7fc-a286d747e35b}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Evaluates the site interlock of the Gamma QPCe ion pump (FB_PIP_Gamma).
+
+ The reusable pump block FB_PIP_Gamma no longer embeds this condition: it consumes the
+ result through its i_xILK_Permit input, which gates stPump.xILKOk and the HV output
+ (conv_0121ae615346 - externalize interlocks behind a permit input and a dedicated
+ F_<Device>_ILK function).
+
+ Usage (wire the result into the permit input of the device block):
+     fbPIP.i_xILK_Permit := F_PIP_Gamma_ILK(i_stGauge  := stInterlockGauge,
+                                            i_rSetpoint := fbPIP.stPump.rHVEna_SP);
+
+ Objectives:
+ - Return TRUE when the ion pump HV may be enabled: the interlock gauge must be
+   valid and its pressure at or below the HV enable setpoint.
+ - Keep the site interlock condition out of the reusable pump block so it can be
+   reviewed, changed and tested in one place.
+ - Be independently reviewable and testable (see FB_DeviceILK_Test).
+
+ History: 2026-11-27 Scirix agent (task #80) - extracted from FB_PIP_Gamma. *)
+
+FUNCTION F_PIP_Gamma_ILK : BOOL
+VAR_INPUT
+    i_stGauge : ST_VG; // Ion or Pirani gauge used as the pump interlock gauge
+    i_rSetpoint : REAL; // HV enable pressure setpoint (ST_PIP.rHVEna_SP)
+END_VAR
+VAR
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* TRUE only when the interlock gauge is valid and at or below the HV enable setpoint. *)
+F_PIP_Gamma_ILK := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= i_rSetpoint);
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

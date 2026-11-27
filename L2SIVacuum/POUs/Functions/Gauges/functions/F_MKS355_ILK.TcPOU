@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_MKS355_ILK" Id="{58af55f7-80ac-4b50-bc8d-885adcc2c109}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Evaluates the site interlock of the MKS 355 hot cathode ion gauge (FB_MKS355).
+
+ The reusable gauge block FB_MKS355 no longer embeds this condition: it consumes the
+ result through its i_xILK_Permit input, which gates IG.xILKOk and the HV output
+ (conv_0121ae615346 - externalize interlocks behind a permit input and a dedicated
+ F_<Device>_ILK function).
+
+ Usage (wire the result into the permit input of the device block):
+     fbMKS355.i_xILK_Permit := F_MKS355_ILK(i_stPG        := stBackingGauge,
+                                            i_rSetpoint  := fbMKS355.IG.rPRO_SP,
+                                            i_rHysteresis := fbMKS355.IG.rHYS_PR,
+                                            i_xGaugeOn   := fbMKS355.IG.q_xHV_DIS);
+
+ Objectives:
+ - Return TRUE when the ion gauge may be enabled: the backing gauge must be valid
+   and its pressure at or below the protection setpoint.
+ - Keep the hysteresis (setpoint + rHYS_PR while the gauge is already on) so the
+   gauge does not power-cycle while sitting on the turn-on boundary.
+ - Be independently reviewable and testable (see FB_DeviceILK_Test).
+
+ History: 2026-11-27 Scirix agent (task #80) - extracted from FB_MKS355. *)
+
+FUNCTION F_MKS355_ILK : BOOL
+VAR_INPUT
+    i_stPG : ST_VG; // Gauge measuring the backing/process pressure, e.g. a Pirani
+    i_rSetpoint : REAL; // Protection setpoint (IG.rPRO_SP), the pressure at which the gauge may be enabled
+    i_rHysteresis : REAL; // Hysteresis band (IG.rHYS_PR) applied once the gauge is on
+    i_xGaugeOn : BOOL; // TRUE while the gauge HV is enabled: selects the wider, hysteretic threshold
+END_VAR
+VAR
+    rThreshold : REAL; // Pressure threshold currently in force
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* Turn on only at or below the setpoint; once the gauge is on it may stay on up to
+   setpoint + hysteresis, which is what keeps it from power cycling at the boundary. *)
+rThreshold := i_rSetpoint;
+IF i_xGaugeOn THEN
+    rThreshold := i_rSetpoint + i_rHysteresis;
+END_IF
+
+F_MKS355_ILK := i_stPG.xPRESS_OK AND (i_stPG.rPRESS <= rThreshold);
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
