@@ -22,6 +22,7 @@ VAR
     bMoving : BOOL;
     bDone :BOOL;
     tBPTMtimeout:TON;
+    rtBPTMtimeout : R_TRIG; // Rising edge of the BPTM transition timeout, used to report the fault once
     bptm: BeamParameterTransitionManager;
     FFO    :    FB_FastFault :=(
         i_DevName := 'VRC_NO_FFO',
@@ -147,6 +148,9 @@ FFO(i_xOK := xMPS_OK,
     i_xReset := ,
     i_xAutoReset :=TRUE,
     io_fbFFHWO := io_fbFFHWO);
+
+(*Reset Alarms*)
+ACT_ResetAlarms();
 ]]></ST>
     </Implementation>
     <Action Name="ACT_IO" Id="{1d4a7f4f-4c3d-41ae-941b-94defd48f5cd}">
@@ -180,14 +184,25 @@ bptm(fbArbiter:=fbArbiter,
      stCurrentBeamParameters:=PMPS_GVL.stCurrentBeamParameters,
      i_sDeviceName:=i_sDevName,
      q_xTransitionAuthorized=>);
-// Timeout
+// Timeout on the BPTM transition: the valve is moving but PMPS never authorized
+// the requested beam-parameter transition.
 tBPTMtimeout(IN:= bMoving AND NOT bptm.q_xTransitionAuthorized , PT:=T#1S);
-//xPMPS_OK := bptm.q_xTransitionAuthorized OR tBPTMtimeout.Q;
+rtBPTMtimeout(CLK:= tBPTMtimeout.Q);
 
-//Timeout and clear request
+//Timeout: clear the arbiter requests and raise the fault
 IF (tBPTMtimeout.Q) THEN
     fbArbiter.RemoveRequest(bptm.i_TransitionAssertionID);
     fbArbiter.RemoveRequest(bptm.i_nRequestedAssertionID);
+    (* tBPTMtimeout.Q still lets the valve move (see xPMPS_OK in the body) so that it
+       can reach its commanded/safe position, but a stalled transition must not pass
+       silently: latch a fault, reported once below, that says the valve moved
+       without PMPS authorization. Cleared by iq_stValve.pv_xAlmRst (ACT_ResetAlarms). *)
+    iq_stValve.bErrorPresent := TRUE;
+END_IF
+IF rtBPTMtimeout.Q THEN
+    iq_stValve.sErrorMessage := 'PMPS transition timeout';
+    fbLogger(sMsg:='PMPS transition timeout: BPTM did not authorize the valve transition; valve motion continued without PMPS authorization.',
+             eSevr:=TcEventSeverity.Critical);
 END_IF]]></ST>
       </Implementation>
     </Action>
