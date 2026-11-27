@@ -561,7 +561,7 @@
     <Compile Include="UnitTests\Functions\V_TO_INT.TcPOU">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="UnitTests\Gauges\FB_GCC_Test.TcPOU">
+    <Compile Include="UnitTests\Gauges\FB_MKS422_Test.TcPOU">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="UnitTests\Gauges\FB_GHC_Test.TcPOU">

@@ -8,7 +8,7 @@ VAR
     fb_PIP_Test: FB_PIP_Test;
     fb_PTM_Test: FB_PTM_Test;
     fb_GPI_Test:FB_GPI_Test;
-    fb_GCC_Test:FB_GCC_Test;
+    fb_MKS422_Test:FB_MKS422_Test;
 
     TotalTests : INT:=0;
 END_VAR

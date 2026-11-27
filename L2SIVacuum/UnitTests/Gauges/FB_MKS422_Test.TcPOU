@@ -1,17 +1,22 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
-  <POU Name="FB_GCC_Test" Id="{abe007c5-97e2-4f83-88a7-7230dad873a3}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_GCC_Test EXTENDS TcUnit.FB_TestSuite
+  <POU Name="FB_MKS422_Test" Id="{abe007c5-97e2-4f83-88a7-7230dad873a3}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Dedicated TcUnit suite for FB_MKS422, the Cold Cathode MKS 422 gauge controller (MKS 937A/B).
+Objectives: verify the 937B/937A analog output conversion and pressure state evaluation, the startup
+output state, the external Pirani interlock and the gauge self protection cut-off.
+Usage: instantiated by PRG_Test, which runs TcUnit.RUN(); every method issues one or more named TEST() cases.
+History: 2026-11-27, renamed from FB_GCC_Test to FB_MKS422_Test (audit finding 1246) - the old name
+referred to an FB_GCC block that does not exist, while this suite only ever exercised FB_MKS422. *)
+FUNCTION_BLOCK FB_MKS422_Test EXTENDS TcUnit.FB_TestSuite
 VAR_INPUT
 END_VAR
 VAR_OUTPUT
 END_VAR
 VAR
-    PG : ST_VG;
-    fb_MKS422: FB_MKS422;
-    //fb_MKS500: FB_MKS500;
-    i_iPRESS_R AT %Q* :INT;
-    cycle:INT :=0;
+    PG : ST_VG; // Pirani gauge structure fed to the cold cathode as its interlock source
+    fb_MKS422: FB_MKS422; // Function block under test
+    i_iPRESS_R AT %Q* :INT; // Simulated 937A/B analog output, linked to FB_MKS422.i_iPRESS_R
+    cycle:INT :=0; // Scan counter used to sequence the test steps
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -31,7 +36,7 @@ VAR
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[TEST('Check_Range');
+        <ST><![CDATA[TEST('MKS422_Check_Range');
 Case This^.cycle of
     12:
     This^.i_iPRESS_R :=  V_TO_INT(0.61);
@@ -96,7 +101,7 @@ Case This^.cycle of
     AssertEquals(eStateExpected,eStateActual,'MKS422A eState Fail');
     AssertEquals_REAL(Expected, Actual,1, 'MKS422A rPress Fail');
     TEST_FINISHED_NAMED('MKS422_Range_Invalid');
-    TEST_FINISHED_NAMED('Check_Range');
+    TEST_FINISHED_NAMED('MKS422_Check_Range');
 
 END_CASE
 
