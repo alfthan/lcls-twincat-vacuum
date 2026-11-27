@@ -579,6 +579,9 @@
     <Compile Include="UnitTests\Pumps\FB_PTM_Test.TcPOU">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="UnitTests\Valves\FB_Kashiyama_VRC_Test.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="UnitTests\Valves\FB_VGC_Test.TcPOU">
       <SubType>Code</SubType>
     </Compile>

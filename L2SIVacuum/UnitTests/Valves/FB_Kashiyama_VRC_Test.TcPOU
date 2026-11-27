@@ -1,0 +1,139 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Kashiyama_VRC_Test" Id="{0fef509c-db8b-496c-9f55-a033153d6384}" SpecialFunc="None">
+    <Declaration><![CDATA[(* Unit tests for FB_Kashiyama_VRC.
+
+   Purpose:
+       Exercise the Kashiyama gate valve logic in isolation, in particular the
+       motion watchdog: an open or close command that never sees its limit
+       switch must raise a latched valve fault and drop the open command
+       (safe output) instead of waiting indefinitely.
+
+   Usage:
+       Instantiated in PRG_Test and run by TcUnit. The valve limit switches are
+       injected through q_stValve.i_xOpnLS / q_stValve.i_xClsLS before each
+       block call, and the watchdog is armed with a zero length
+       i_tMotionTimeOut so the expiry is reached within a single PLC cycle.
+       Every case runs exactly once, guarded by its own "done" flag.
+
+   History:
+       2026-11-27 - taio-generic-0: Initial test suite (audit finding #1225).
+*)
+FUNCTION_BLOCK FB_Kashiyama_VRC_Test EXTENDS TcUnit.FB_TestSuite
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR
+    fbKashiyamaVRC : FB_Kashiyama_VRC; //Function block under test
+    stPump : ST_KashiyamaDryPump; //Simulated pump status, drives q_stValve.xOPN_OK
+    stGauge : ST_VG; //Simulated gauge status, drives q_stValve.xOPN_OK and the HiVac close logic
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[M_INIT();
+M_MotionTimeOut(); // always run, the method guards its own cases]]></ST>
+    </Implementation>
+    <Method Name="M_INIT" Id="{11de7e37-721d-470b-bbd6-ace25cd77ff3}">
+      <Declaration><![CDATA[METHOD M_INIT : BOOL
+VAR
+    xStartupDone : BOOL; //Guards the startup case so it runs exactly once
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT xStartupDone THEN
+    TEST('KashiyamaVRC_Startup');
+    // Pump and gauge status satisfy the open permit, but nothing is commanded.
+    stPump.i_xIsRun := TRUE;
+    stPump.RdyTmr := 0.0;
+    stPump.HighSP := 600.0;
+    stPump.q_xLspdDo := FALSE;
+    stGauge.rPRESS := 100.0;
+    stGauge.xPRESS_OK := TRUE;
+
+    // Valve sits on its closed limit switch and is not commanded.
+    fbKashiyamaVRC.q_stValve.i_xClsLS := TRUE;
+    fbKashiyamaVRC.q_stValve.i_xOpnLS := FALSE;
+    fbKashiyamaVRC.q_stValve.pv_xOPN_SW := FALSE;
+    fbKashiyamaVRC.q_stValve.pv_xAlmRst := FALSE;
+
+    // Zero length timeout: any motion still pending would fault in this very cycle.
+    fbKashiyamaVRC(Pump := stPump, Gauge := stGauge, i_xExtILK_OK := TRUE, i_xOverrideMode := FALSE, i_tMotionTimeOut := T#0MS);
+
+    AssertFalse(fbKashiyamaVRC.q_stValve.q_xOPN_DO, 'KashiyamaVRC commanded the valve open without a request');
+    AssertFalse(fbKashiyamaVRC.q_stValve.bErrorPresent, 'KashiyamaVRC raised a fault while sitting closed');
+    TEST_FINISHED_NAMED('KashiyamaVRC_Startup');
+    xStartupDone := TRUE;
+END_IF
+M_INIT := xStartupDone;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_MotionTimeOut" Id="{46141a40-59e4-4192-b4ab-b89dc47639f2}">
+      <Declaration><![CDATA[METHOD M_MotionTimeOut
+VAR
+    xOpenTimeOutDone : BOOL; //Guards the open timeout case so it runs exactly once
+    xFaultLatchedDone : BOOL; //Guards the latch case so it runs exactly once
+    xFaultAckDone : BOOL; //Guards the acknowledge case so it runs exactly once
+    xCloseTimeOutDone : BOOL; //Guards the close timeout case so it runs exactly once
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Open command that never reaches the open limit switch -> latched fault, safe output *)
+IF NOT xOpenTimeOutDone THEN
+    TEST('KashiyamaVRC_OpenTimeOut');
+    fbKashiyamaVRC.q_stValve.pv_xOPN_SW := TRUE; //Operator commands the valve open
+    fbKashiyamaVRC.q_stValve.i_xClsLS := FALSE; //Valve left its closed limit switch
+    fbKashiyamaVRC.q_stValve.i_xOpnLS := FALSE; //Open limit switch never makes
+    fbKashiyamaVRC.q_stValve.pv_xAlmRst := FALSE;
+    fbKashiyamaVRC(Pump := stPump, Gauge := stGauge, i_xExtILK_OK := TRUE, i_xOverrideMode := FALSE, i_tMotionTimeOut := T#0MS);
+
+    AssertTrue(fbKashiyamaVRC.q_stValve.bErrorPresent, 'KashiyamaVRC did not raise a fault when the open motion timed out');
+    AssertTrue(fbKashiyamaVRC.q_stValve.sErrorMessage <> '', 'KashiyamaVRC did not set an error message for the open timeout');
+    AssertFalse(fbKashiyamaVRC.q_stValve.q_xOPN_DO, 'KashiyamaVRC kept commanding the valve open after the open timeout');
+    AssertFalse(fbKashiyamaVRC.q_stValve.pv_xOPN_SW, 'KashiyamaVRC did not drop the open request after the open timeout');
+    TEST_FINISHED_NAMED('KashiyamaVRC_OpenTimeOut');
+    xOpenTimeOutDone := TRUE;
+END_IF
+
+(* The fault stays latched even when the limit switches finally show the valve open *)
+IF xOpenTimeOutDone AND NOT xFaultLatchedDone THEN
+    TEST('KashiyamaVRC_FaultLatched');
+    fbKashiyamaVRC.q_stValve.i_xClsLS := FALSE;
+    fbKashiyamaVRC.q_stValve.i_xOpnLS := TRUE; //Valve now reports open
+    fbKashiyamaVRC.q_stValve.pv_xOPN_SW := TRUE;
+    fbKashiyamaVRC.q_stValve.pv_xAlmRst := FALSE;
+    fbKashiyamaVRC(Pump := stPump, Gauge := stGauge, i_xExtILK_OK := TRUE, i_xOverrideMode := FALSE, i_tMotionTimeOut := T#0MS);
+
+    AssertTrue(fbKashiyamaVRC.q_stValve.bErrorPresent, 'KashiyamaVRC cleared the latched fault without an acknowledge');
+    TEST_FINISHED_NAMED('KashiyamaVRC_FaultLatched');
+    xFaultLatchedDone := TRUE;
+END_IF
+
+(* Only the dedicated alarm reset clears the latched fault *)
+IF xFaultLatchedDone AND NOT xFaultAckDone THEN
+    TEST('KashiyamaVRC_FaultAck');
+    fbKashiyamaVRC.q_stValve.pv_xAlmRst := TRUE; //Acknowledge
+    fbKashiyamaVRC(Pump := stPump, Gauge := stGauge, i_xExtILK_OK := TRUE, i_xOverrideMode := FALSE, i_tMotionTimeOut := T#0MS);
+
+    AssertFalse(fbKashiyamaVRC.q_stValve.bErrorPresent, 'KashiyamaVRC did not clear the fault on acknowledge');
+    AssertTrue(fbKashiyamaVRC.q_stValve.sErrorMessage = '', 'KashiyamaVRC kept the error message after acknowledge');
+    TEST_FINISHED_NAMED('KashiyamaVRC_FaultAck');
+    xFaultAckDone := TRUE;
+END_IF
+
+(* Close command that never leaves the open limit switch -> latched fault *)
+IF xFaultAckDone AND NOT xCloseTimeOutDone THEN
+    TEST('KashiyamaVRC_CloseTimeOut');
+    fbKashiyamaVRC.q_stValve.pv_xOPN_SW := FALSE; //Operator commands the valve closed
+    fbKashiyamaVRC.q_stValve.i_xClsLS := FALSE; //Closed limit switch never makes
+    fbKashiyamaVRC.q_stValve.i_xOpnLS := TRUE; //Valve still reports open
+    fbKashiyamaVRC.q_stValve.pv_xAlmRst := FALSE;
+    fbKashiyamaVRC(Pump := stPump, Gauge := stGauge, i_xExtILK_OK := TRUE, i_xOverrideMode := FALSE, i_tMotionTimeOut := T#0MS);
+
+    AssertTrue(fbKashiyamaVRC.q_stValve.bErrorPresent, 'KashiyamaVRC did not raise a fault when the close motion timed out');
+    AssertTrue(fbKashiyamaVRC.q_stValve.sErrorMessage <> '', 'KashiyamaVRC did not set an error message for the close timeout');
+    AssertFalse(fbKashiyamaVRC.q_stValve.q_xOPN_DO, 'KashiyamaVRC is commanding the valve open after a close timeout');
+    TEST_FINISHED_NAMED('KashiyamaVRC_CloseTimeOut');
+    xCloseTimeOutDone := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

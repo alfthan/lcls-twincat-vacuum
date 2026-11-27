@@ -5,6 +5,23 @@
         1. pump is NORMAL operating status, and
         2. chamber pressure is below HighSP or pump is at LowSpeed state.
     it will close if chamber pressure is below than lowSP for 180s.
+
+    Usage:
+        Call once per PLC cycle. Wire i_xExtILK_OK to the site interlock function
+        (e.g. F_TURBO_VRC_ILK) and link the AT %I* / AT %Q* terminals to the valve
+        limit switches and open solenoid.
+
+    Objectives:
+        - Own the valve I/O, position state, override and pressure based close logic.
+        - Bound every open/close motion with a watchdog (i_tMotionTimeOut). On expiry
+          the command is counted as failed: a latched valve fault is raised
+          (q_stValve.bErrorPresent + q_stValve.sErrorMessage) and the safe output is
+          applied (open command dropped). The fault clears only via
+          q_stValve.pv_xAlmRst, never by the limit switches or the command itself.
+
+    History:
+        2026-11-27 - taio-generic-0: Add motion timeout watchdog, latched fault and
+                     safe output on expiry (audit finding #1225).
 *)
 FUNCTION_BLOCK FB_Kashiyama_VRC
 VAR_IN_OUT
@@ -19,6 +36,7 @@ VAR_INPUT
     i_xExtILK_OK : BOOL; //Connect to Interlock logic condition(e.g F_TURBO_VRC_ILK Function), otherwise, Set to True if the valve is not interlocked
     Gauge : ST_VG;// Pressure Gauge
     i_xOverrideMode : BOOL;
+    i_tMotionTimeOut : TIME := T#30S; //Max time allowed for the commanded limit switch to make before a latched motion fault is raised
 END_VAR
 VAR
     At_HiVac : BOOL;
@@ -28,6 +46,11 @@ VAR
     tonOvrd	:	TON;
     tonDelOK : TON;
     rtOK	:	R_TRIG;
+
+    (*Motion watchdog*)
+    xMotionPending : BOOL; //TRUE while a command is issued and the limit switch matching that command is not yet made
+    xMotionFault : BOOL; //Latched motion timeout fault, cleared only by q_stValve.pv_xAlmRst
+    tonMotionTimeOut : TON; //Times the pending motion against i_tMotionTimeOut
 
     (*IO*)
     i_xOpnLS	AT%I*: BOOL;
@@ -93,6 +116,41 @@ END_IF
 
 (* Here's where the valve opens *)
 q_stValve.q_xOPN_DO := (q_stValve.pv_xOPN_SW AND q_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+
+(* Motion watchdog *)
+(* Acknowledge the latched motion fault. Only the alarm reset clears it, dropping the
+   command or a limit switch change never does. The watchdog then re-arms, so a valve
+   that is still stuck faults again after another i_tMotionTimeOut. *)
+IF q_stValve.pv_xAlmRst THEN
+    xMotionFault := FALSE;
+    q_stValve.bErrorPresent := FALSE;
+    q_stValve.sErrorMessage := '';
+    q_stValve.pv_xAlmRst := FALSE;
+END_IF
+
+(* The command is pending from the command/state transition until the limit switch
+   matching the commanded direction is made *)
+xMotionPending := (q_stValve.q_xOPN_DO AND NOT q_stValve.i_xOpnLS) OR (NOT q_stValve.q_xOPN_DO AND NOT q_stValve.i_xClsLS);
+
+(* The timer restarts from zero on every command/state transition and is held reset
+   while the fault is latched, so the reset above gives one fresh timeout window *)
+tonMotionTimeOut(IN := xMotionPending AND NOT xMotionFault, PT := i_tMotionTimeOut);
+
+IF tonMotionTimeOut.Q THEN
+    xMotionFault := TRUE;
+    IF q_stValve.q_xOPN_DO THEN
+        q_stValve.sErrorMessage := 'Open Timeout';
+    ELSE
+        q_stValve.sErrorMessage := 'Close Timeout';
+    END_IF
+    q_stValve.bErrorPresent := TRUE;
+END_IF
+
+(* Safe output on expiry: stop commanding the valve into a position it cannot reach *)
+IF xMotionFault THEN
+    q_stValve.pv_xOPN_SW := FALSE;
+    q_stValve.q_xOPN_DO := FALSE;
+END_IF
 
 (*Soft IO Mapping*)
 ACT_IO();]]></ST>
