@@ -4,6 +4,17 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Analog input terminal scaling *)
+    gc_uiDefaultTermBits     : UINT := 32767; // full-scale bit count of a 16 bit bipolar analog input terminal
+
+    (* Oerlikon Leybold ITR 90 hot cathode gauge, values as per the ITR 90 manual *)
+    gc_rITR90FullScaleV      : REAL := 10.0; // input voltage span of the gauge analog pressure signal
+    gc_rITR90TransferOffsetV : REAL := 7.75; // voltage offset of the log transfer function p = 10^((rV - offset)/slope + rC)
+    gc_rITR90VoltsPerDecade  : REAL := 0.75; // slope of the log transfer function in volts per pressure decade
+    gc_rITR90MinValidV       : REAL := 0.5;  // below this voltage the gauge is disconnected / not on
+    gc_rITR90LoHiSplitV      : REAL := 4.5;  // valid-low to valid-high transition voltage of the validity window
+    gc_rITR90MaxValidV       : REAL := 9.9;  // above this voltage the pressure reading is invalid
 END_VAR
 ]]></Declaration>
   </GVL>
