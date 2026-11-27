@@ -12,8 +12,24 @@ VAR_INPUT
     tRecoverDelay : TIME := T#600S; (*Delay Time after the first cycle to start the device. Default is 600S*)
 END_VAR
 VAR_OUTPUT
+    (* Ion gauge interface published to EPICS.
+       The pv name is deliberately left empty: pytmc takes the record prefix
+       from the FB instance's own pragma (e.g. 'pv: <INST>' on the FB_MX7M
+       instance in the machine GVL) and the record name from the pv of each
+       ST_VG member (PRESS, AT_VAC, PRESS_OK, STATE, HV_SW, Auto_On,
+       AutoOn_timer, PRESS_AI, HV_ON, DISC_ACTIVE, HV_DIS_DO, VAC_SP, PRO_SP,
+       SP_HYS, ILK_OK, LOGGER), every one of which declares its own io
+       direction and metadata in ST_VG. pytmc only walks into a struct whose
+       own pragma is present, so the pragma has to stay; naming this container
+       would insert an extra path segment and rename every published ion gauge
+       PV. The io: io declared here is the direction of the interface as a
+       whole - it publishes both EPICS commands (HV_SW, Auto_On, VAC_SP,
+       PRO_SP, SP_HYS, LOGGER) and readbacks (PRESS, AT_VAC, PRESS_OK, STATE,
+       PRESS_AI, HV_ON, DISC_ACTIVE, HV_DIS_DO, ILK_OK) - and it only applies
+       to a member that declares no io of its own. *)
     {attribute 'pytmc' := '
     pv:
+    io: io;
     '}
     IG : ST_VG;
 END_VAR
