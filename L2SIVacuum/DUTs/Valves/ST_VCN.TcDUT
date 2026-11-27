@@ -11,21 +11,21 @@ STRUCT
     field: ONAM OPEN;
     io: io ;
     '}
-    xOPN_SW	: BOOL;
+    xOPN_SW	: BOOL; // Open command switch: TRUE = open, FALSE = close (PV OPN_SW; 0 = CLOSE, 1 = OPEN). Not evaluated by FB_VCN or FB_MKS248 - those select a mode through eValveControl, so this bit currently commands nothing.
     {attribute 'pytmc' := '
     pv: POS_RDBK;
     io: i;
     '}
     // Inputs
-    i_iPosition	:	REAL; //Position readback (if it exists)
+    i_iPosition	:	REAL; // Analog position readback input, in raw ADC counts (0..32767 counts = 0..10 V, 3.0518E-4 V per count) when the valve provides one; no voltage or percent scaling is applied. FB_VCN copies the commanded q_iRawPosition into it, so PV POS_RDBK echoes the command instead of measuring the valve (FB_MKS248 leaves it at 0).
 
     // Outputs
     {attribute 'pytmc' := '
     pv: POS_AO_R;
     io: i ;
     '}
-    q_iRawPosition	:	INT; //Position control
-    //For the EVR 116 this is 0-10V analog 0.4 closed to 9.1 Closed
+    q_iRawPosition	:	INT; // Raw analog position command, in ADC counts (0..32767 counts over the 0..10 V output span, 3.0518E-4 V per count); for the EVR 116, 0.4 V = closed and 9.1 V = fully open.
+    //Scaled by FB_VCN as 32767/10 * rReqVoltage and clamped to the 0.4..9.1 V EVR 116 span
 
     //Softvariables
     {attribute 'pytmc' := '
@@ -34,7 +34,7 @@ STRUCT
     field: ONAM OK ;
     io: i;
     '}
-    xIlkOK	:	BOOL := FALSE; // Interlock Bit
+    xIlkOK	:	BOOL := FALSE; // Interlock status: TRUE = all valve interlocks satisfied and the valve may move, FALSE = interlock lost (default FALSE; FB_VCN then forces rReqPosition := 0 and CloseValve).
 
     {attribute 'pytmc' := '
     pv: ILK_SP;
@@ -45,19 +45,19 @@ STRUCT
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rIlk_SP	:	REAL := 0.0005;	// Interlock setpoint for gauges on both sides of valve
+    rIlk_SP	:	REAL := 0.0005;	// Interlock setpoint for the gauges on both sides of the valve, in Torr (PV ILK_SP, EGU TORR, 0..1000 Torr); default 5.0E-4 Torr.
 
     {attribute 'pytmc' := '
     pv: Limit;
     io: io;
     autosave_pass1: VAL DESC
     '}
-    rUpperLimit	:	REAL:=100; // Percentage//Upper limit on valve open
+    rUpperLimit	:	REAL:=100; // Upper limit for valve opening, in percent of full stroke (0.0-100.0 %); used as the OpenValve target and as the clamp in ManualControl/PressureControl, limited to 0..100 and persisted (PV Limit).
     {attribute 'pytmc' := '
     pv: POS_REQ;
     io: io;
     '}
-    rReqPosition	:	REAL; //Requested position (0.0-100.0%)
+    rReqPosition	:	REAL; // Requested valve position, in percent of full stroke (0.0-100.0 %), before the 0..rUpperLimit clamp and the voltage scaling (PV POS_REQ).
     {attribute 'pytmc' :=  '
     pv: STATE ;
     field: ZRST Close ;
@@ -66,9 +66,9 @@ STRUCT
     field: THST ManualControl ;
     io: io
     '}
-    eValveControl	:	E_VCN := CloseValve; // Valve control state
+    eValveControl	:	E_VCN := CloseValve; // Valve control mode (PV STATE: 0 = CloseValve, 1 = OpenValve, 2 = PressureControl, 3 = ManualControl); FB_VCN derives rReqPosition from it and closes the valve while xIlkOK is FALSE.
 
-    ftIlk	:	F_TRIG;
+    ftIlk	:	F_TRIG; // Falling-edge detector reserved for the interlock-OK signal (TRUE -> FALSE edge); not clocked by FB_VCN or FB_MKS248 today, so it never fires.
 
 END_STRUCT
 END_TYPE
