@@ -1,7 +1,22 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_CMR362" Id="{829c6b91-5e76-4127-a78c-3990b7df60a3}" SpecialFunc="None">
-    <Declaration><![CDATA[(* For Pfeiffer CMR 362 *)
+    <Declaration><![CDATA[(* FB_CMR362 - Pfeiffer CMR 362 analog (0 - 10 V) gauge
+   Introduction:
+       Converts the CMR 362 analog output voltage into a pressure in Torr and classifies the reading
+       (Valid / ValidLo / GaugeDisconnected / OoR) for the surrounding vacuum logic.
+   Usage:
+       Call once per cycle with the analog input wired to i_iPRESS_R; the whole device state is
+       published through the PG interface struct (ST_VG). Call M_SetBits when the analog terminal
+       does not deliver a 16 bit full-scale value.
+   Objectives:
+       * Keep the analog scaling and the range boundaries in one place: they are declared as the
+         named gc_rCMR362* constants in GVL_PfeifferParameters, so a CMR 362 span or calibration
+         change is a single edit per value instead of a search through the conversion logic.
+   History:
+       2026-11-27 (taio-generic-0) - Replaced the embedded 10 V, 0.4 V / 1.0 V / 9.8 V and 0.125
+                                    literals with the named gc_rCMR362* constants. No behaviour change.
+*)
 FUNCTION_BLOCK FB_CMR362
 VAR_INPUT
 END_VAR
@@ -10,36 +25,37 @@ VAR_OUTPUT
         PG : ST_VG;
 END_VAR
 VAR
-    MinPressure: REAL := 7.5E-3; //Torr
-    FullScale : REAL := 75.0 ; //Torr
-    V : REAL;
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    (* Calibration parameters - override per instance for a different CMR 362 full scale *)
+    MinPressure : REAL := 7.5E-3; //Torr, lowest pressure the gauge reports (fixed below-range output)
+    FullScale : REAL := 75.0; //Torr, pressure at the top of the measuring range (gc_rCMR362VoltageValidHiMax)
+    V : REAL; //V, gauge output voltage derived from the raw analog input
+    iTermBits : UINT := 32767 ; // The terminal's maximum value in bits
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
-(* For Pfeiffer CMR 362 *)
+(* FB_CMR362 - Pfeiffer CMR 362 analog (0 - 10 V) gauge *)
 (*Soft IO Mapping*)
 ACT_IO();
 
 (* Real-value calculation *)
 If (iTermBits=0) THEN iTermBits := 32767;END_IF
-V := 10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
+V := gc_rCMR362VoltageSpan*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
 
-
-IF V < 0.4 THEN
+(* Classify the reading on the gauge output voltage *)
+IF V < gc_rCMR362VoltageDisconnected THEN
 
     PG.eState := GaugeDisconnected; //Most likely not connected
 
-ELSIF V >= 0.4 AND V <= 1.0 THEN
+ELSIF V >= gc_rCMR362VoltageDisconnected AND V <= gc_rCMR362VoltageValidLoMax THEN
     PG.rPRESS := MinPressure;
     PG.eState := ValidLo;
 
-ELSIF V > 1 AND V <= 9.8 THEN
+ELSIF V > gc_rCMR362VoltageValidLoMax AND V <= gc_rCMR362VoltageValidHiMax THEN
 
-    PG.rPRESS := LREAL_TO_REAL((V-1)*0.125*FullScale);
+    PG.rPRESS := LREAL_TO_REAL((V-gc_rCMR362VoltageValidLoMax)*gc_rCMR362PressureSpanFactor*FullScale);
     PG.eState := Valid;
 
 ELSE

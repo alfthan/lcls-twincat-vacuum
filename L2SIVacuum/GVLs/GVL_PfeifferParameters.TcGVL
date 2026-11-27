@@ -3,6 +3,13 @@
   <GVL Name="GVL_PfeifferParameters" Id="{7ae349b1-f7bb-4dc5-88f6-6016367034c2}">
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gcMaxPfeifferPumps	:	INT := 20; //maximum size of the Pfeiffer turbo pump array for a single port
+    (* Pfeiffer CMR 36x analog gauge interface.
+       Shared by every CMR362 instance; change the span of a single gauge through FB_CMR362.FullScale. *)
+    gc_rCMR362VoltageSpan : REAL := 10.0; //V, gauge output voltage that corresponds to the terminal's full-scale bit value
+    gc_rCMR362VoltageDisconnected : REAL := 0.4; //V, at or below this output the gauge is treated as disconnected
+    gc_rCMR362VoltageValidLoMax : REAL := 1.0; //V, top of the fixed below-range output and zero point of the linear band
+    gc_rCMR362VoltageValidHiMax : REAL := 9.8; //V, top of the measuring range; above this the reading is out of range
+    gc_rCMR362PressureSpanFactor : REAL := 0.125; //fraction of FullScale per volt in the linear band (1 V .. 9.8 V)
 END_VAR]]></Declaration>
   </GVL>
 </TcPlcObject>
