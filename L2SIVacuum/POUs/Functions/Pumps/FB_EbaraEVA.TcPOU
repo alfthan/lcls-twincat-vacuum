@@ -44,12 +44,21 @@ ELSE
 END_IF
 
 (*State evaluation*)
+(* The published state must match the STATE PV contract of ST_RoughPump
+   (ZRST STOPPED / ONST STARTING / TWST RUNNING / THST FAULT):
+     FAULT    - a lost alarm (i_xAlarmOK FALSE) only,
+     STOPPED  - not commanded to run,
+     STARTING - commanded to run but not reported running yet. The branch is
+                keyed off the run command, as FB_KashiyamaPump and
+                FB_EbaraDryPump do, so the documented STARTING state is
+                reachable through a normal start transient,
+     RUNNING  - reported running. *)
 IF NOT(stPump.i_xAlarmOK ) THEN
      ePrevState := stpump.eState;
     stpump.eState := pumpFAULT;
 ELSIF NOT stpump.q_xRunDo AND stPump.i_xAlarmOK THEN
         stpump.eState := pumpSTOPPED;
-ELSIF NOT stpump.q_xRunDo AND NOT stPump.i_xIsRun THEN
+ELSIF stpump.q_xRunDo AND NOT stPump.i_xIsRun THEN
         stpump.eState := pumpSTARTING;
 ELSIF stPump.i_xIsRun THEN
         stpump.eState := pumpRUNNING;

@@ -4,6 +4,7 @@
     <Declaration><![CDATA[PROGRAM PRG_Test
 VAR
     fb_VGC_Test: FB_VGC_Test;
+    fb_EbaraEVA_Test: FB_EbaraEVA_Test;
     fb_VRC_Test: FB_VRC_Test;
     fb_PIP_Test: FB_PIP_Test;
     fb_PTM_Test: FB_PTM_Test;

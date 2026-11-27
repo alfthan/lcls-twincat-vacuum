@@ -1,0 +1,126 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_EbaraEVA_Test" Id="{e3fad1a9-2701-4bb6-8b03-3604afaaff18}" SpecialFunc="None">
+    <Declaration><![CDATA[(*
+    Purpose:
+        Unit test suite for FB_EbaraEVA. Verifies that the state the block
+        publishes on the STATE PV follows the ST_RoughPump / E_PumpState
+        contract (ZRST STOPPED / ONST STARTING / TWST RUNNING / THST FAULT),
+        in particular that a commanded pump which is not running yet reads back
+        STARTING instead of FAULT.
+
+    Usage:
+        Instanced in PRG_Test; TcUnit collects and runs the suite. Each test
+        presets the block's soft copies of its hardware inputs
+        (stPump.i_xAlarmOK, stPump.i_xIsRun) before calling the block, because
+        the block's ACT_IO action re-reads the %I* hardware after the state
+        evaluation. Each test therefore runs exactly once, guarded by its
+        x...Tested flag.
+
+    Objectives:
+        - Keep the published state reachable and consistent with the STATE PV
+          contract documented in ST_RoughPump.
+        - Reserve pumpFAULT for a real alarm condition.
+
+    History:
+        2026-11-27 Scirix agent (task #172) - created. Regression test for the
+                    unreachable pumpSTARTING state: the STARTING branch tested
+                    NOT q_xRunDo, so a normal start transient published FAULT.
+*)
+FUNCTION_BLOCK FB_EbaraEVA_Test EXTENDS TcUnit.FB_TestSuite
+VAR
+    fb_EVA : FB_EbaraEVA; //block under test
+    xStoppedTested : BOOL; //EbaraEVA_Stopped already ran
+    xStartingTested : BOOL; //EbaraEVA_Starting already ran
+    xRunningTested : BOOL; //EbaraEVA_Running already ran
+    xFaultTested : BOOL; //EbaraEVA_Fault already ran
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[M_Stopped();
+M_Starting();
+M_Running();
+M_Fault();]]></ST>
+    </Implementation>
+    <Method Name="M_Stopped" Id="{7f270a91-a643-4b2d-92bd-76076dd7de4b}">
+      <Declaration><![CDATA[(* Not commanded to run with the alarm healthy must read back STOPPED. *)
+M_Stopped
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT xStoppedTested THEN
+    xStoppedTested := TRUE;
+    TEST('EbaraEVA_Stopped');
+    This^.fb_EVA.stPump.i_xAlarmOK := TRUE;
+    This^.fb_EVA.stPump.i_xIsRun := FALSE;
+    This^.fb_EVA.stPump.pv_xRunSW := FALSE;
+    This^.fb_EVA(i_xExtIlkOK:= TRUE);
+    AssertTrue(This^.fb_EVA.stPump.eState = E_PumpState.pumpSTOPPED, 'EbaraEVA not commanded to run reported a state other than STOPPED');
+    TEST_FINISHED_NAMED('EbaraEVA_Stopped');
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Starting" Id="{1961ea16-9c26-4fd4-96e4-800c34d068ae}">
+      <Declaration><![CDATA[(* Commanded to run while the run feedback is still FALSE must read back
+STARTING - this is the state the STATE PV documents as ONST STARTING. *)
+M_Starting
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT xStartingTested THEN
+    xStartingTested := TRUE;
+    TEST('EbaraEVA_Starting');
+    This^.fb_EVA.stPump.i_xAlarmOK := TRUE;
+    This^.fb_EVA.stPump.i_xIsRun := FALSE;
+    This^.fb_EVA.stPump.pv_xRunSW := TRUE;
+    This^.fb_EVA(i_xExtIlkOK:= TRUE);
+    AssertTrue(This^.fb_EVA.stPump.q_xRunDo, 'EbaraEVA start command did not set q_xRunDo');
+    AssertTrue(This^.fb_EVA.stPump.eState = E_PumpState.pumpSTARTING, 'EbaraEVA commanded to run but not running yet reported a state other than STARTING');
+    TEST_FINISHED_NAMED('EbaraEVA_Starting');
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Running" Id="{ccb4ddba-84bc-4f41-b082-e2f14f37bf35}">
+      <Declaration><![CDATA[(* Commanded to run with the run feedback TRUE must read back RUNNING. *)
+M_Running
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT xRunningTested THEN
+    xRunningTested := TRUE;
+    TEST('EbaraEVA_Running');
+    This^.fb_EVA.stPump.i_xAlarmOK := TRUE;
+    This^.fb_EVA.stPump.i_xIsRun := TRUE;
+    This^.fb_EVA.stPump.pv_xRunSW := TRUE;
+    This^.fb_EVA(i_xExtIlkOK:= TRUE);
+    AssertTrue(This^.fb_EVA.stPump.eState = E_PumpState.pumpRUNNING, 'EbaraEVA running pump reported a state other than RUNNING');
+    TEST_FINISHED_NAMED('EbaraEVA_Running');
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Fault" Id="{24f8875f-a7f0-4432-b9e6-13473c0b4ed4}">
+      <Declaration><![CDATA[(* A lost alarm (normally closed alarm input not OK) must read back FAULT
+and drop the run command. *)
+M_Fault
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT xFaultTested THEN
+    xFaultTested := TRUE;
+    TEST('EbaraEVA_Fault');
+    This^.fb_EVA.stPump.i_xAlarmOK := FALSE;
+    This^.fb_EVA.stPump.i_xIsRun := FALSE;
+    This^.fb_EVA.stPump.pv_xRunSW := TRUE;
+    This^.fb_EVA(i_xExtIlkOK:= TRUE);
+    AssertFalse(This^.fb_EVA.stPump.q_xRunDo, 'EbaraEVA kept the run command while the alarm was not OK');
+    AssertTrue(This^.fb_EVA.stPump.eState = E_PumpState.pumpFAULT, 'EbaraEVA alarm not OK reported a state other than FAULT');
+    TEST_FINISHED_NAMED('EbaraEVA_Fault');
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

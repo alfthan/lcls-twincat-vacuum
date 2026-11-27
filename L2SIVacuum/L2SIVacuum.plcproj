@@ -573,6 +573,9 @@
     <Compile Include="UnitTests\PRG_Test.TcPOU">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="UnitTests\Pumps\FB_EbaraEVA_Test.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="UnitTests\Pumps\FB_PIP_Test.TcPOU">
       <SubType>Code</SubType>
     </Compile>
