@@ -69,6 +69,10 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block performs serial transactions with an Oerlikon TD20 *)
+(* History:
+   2026-11-27 - abort an in-flight transaction when i_xExecute drops instead
+                of sending and waiting for the reply to the end (finding #1250).
+*)
 
 (* rising edge trigger *)
 rtExecute(CLK:= i_xExecute);
@@ -80,6 +84,25 @@ IF rtExecute.Q THEN
     MEMSET(destAddr:=ADR(q_abSendData), fillByte:=0, n:=SIZEOF(q_abSendData));
     MEMSET(destAddr:=ADR(q_abResponseData), fillByte:=0, n:=SIZEOF(q_abResponseData));
     iStep := 10;
+END_IF
+
+(* falling edge abort: a command must stop when i_xExecute drops, also while the
+   frame is still being sent or the reply is still outstanding.  Only the
+   in-flight states 10-30 abort here: state 0 is idle, state 100 already returns
+   to idle when i_xExecute drops, and state 9000 holds the latched fault. *)
+IF i_xExecute = FALSE AND (iStep = 10 OR iStep = 20 OR iStep = 30) THEN
+    (* release the receive helper and flush the com buffers so that a later
+       transaction does not continue the aborted frame *)
+    fbReceiveData(
+        pReceiveData:= ADR(q_abResponseData),
+        Reset:= TRUE,
+        RXbuffer:= iq_stSerialRXBuffer);
+    fbClearComBuffer(Buffer:= iq_stSerialRXBuffer);
+    fbClearComBuffer(Buffer:= iq_stSerialTXBuffer);
+    tonTimeout(IN:= FALSE);
+    q_xDone := FALSE;
+    q_sResult := 'Transaction aborted: the execute input dropped before the transaction completed.';
+    iStep := 9000; (* latched fault: the command was not carried out *)
 END_IF
 
 CASE iStep OF
