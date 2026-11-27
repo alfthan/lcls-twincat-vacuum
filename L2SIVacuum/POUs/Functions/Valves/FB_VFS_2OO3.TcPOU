@@ -125,6 +125,15 @@ is Open.
 (*On first PLC pass, put valve into vented state, which implies a closed valve*)
 IF xFirstPass THEN
     fbFF.i_DevName := i_sDevName;
+    (* Do not trust the retained output image: drive the closed/de-energized state explicitly so the
+    shutter cannot start up in its previous (possibly open) output state *)
+    q_xOPN_DO := FALSE;         //Open solenoid de-energized, valve cannot be held open
+    q_xClose_A := FALSE;        //Close solenoids de-energized, no close pulse pending
+    q_xClose_B := FALSE;
+    q_xClose_C := FALSE;
+    q_xVAC_FAULT_OK := FALSE;   //No (possibly retained) permit handed to the neighboring valves
+    xOpen := FALSE;             //No open command pending
+    xClose := FALSE;            //No close pulse pending
     xFirstPass := FALSE;
 END_IF
 
