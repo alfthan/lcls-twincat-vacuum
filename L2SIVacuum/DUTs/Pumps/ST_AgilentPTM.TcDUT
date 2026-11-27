@@ -91,7 +91,7 @@ STRUCT
     field: PREC 2
     field: EGU "W";
     '}
-    i_rPowerMon : REAL;
+    i_rPowerMon : REAL; (* Pump electrical input power in Watts (W), scaled from the controller's analog power-monitor signal *)
 
 END_STRUCT
 END_TYPE
