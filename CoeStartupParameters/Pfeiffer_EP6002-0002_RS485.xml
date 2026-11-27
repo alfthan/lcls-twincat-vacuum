@@ -1,11 +1,19 @@
 <?xml version='1.0' encoding='ISO-8859-1'?>
+<!--
+  CoE startup parameters for the EP6002-0002 RS232/422/485 serial terminal (Pfeiffer).
+  Every InitCmd is bounded by a finite CoE mailbox timeout so that a terminal which
+  does not answer a mailbox write aborts EtherCAT startup with an explicit error
+  instead of stalling the PS transition indefinitely. TwinCAT treats Timeout 0 as
+  "no timeout monitoring", so keep a non-zero value when re-exporting these
+  parameters from the TwinCAT System Manager (3000 ms is used here).
+-->
 <EtherCATMailbox>
   <CoE>
     <InitCmds>
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Interface Type Ch 1</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>63488</Index>
         <SubIndex>1</SubIndex>
@@ -14,7 +22,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Interface Type Ch 2</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>63488</Index>
         <SubIndex>2</SubIndex>
@@ -23,7 +31,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Baudrate</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32784</Index>
         <SubIndex>17</SubIndex>
@@ -32,7 +40,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable half duplex</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32784</Index>
         <SubIndex>6</SubIndex>
@@ -41,7 +49,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Baudrate</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32768</Index>
         <SubIndex>17</SubIndex>
@@ -50,7 +58,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable half duplex</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32768</Index>
         <SubIndex>6</SubIndex>
@@ -59,7 +67,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable point to point connection (RS422)</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32768</Index>
         <SubIndex>7</SubIndex>
@@ -68,7 +76,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable point to point connection (RS422)</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32784</Index>
         <SubIndex>7</SubIndex>
@@ -77,7 +85,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Data frame</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32768</Index>
         <SubIndex>21</SubIndex>
@@ -86,7 +94,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Data frame</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32784</Index>
         <SubIndex>21</SubIndex>
@@ -95,7 +103,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable XON/XOFF supported tx data</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32768</Index>
         <SubIndex>2</SubIndex>
@@ -104,7 +112,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable XON/XOFF supported rx data</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32768</Index>
         <SubIndex>3</SubIndex>
@@ -113,7 +121,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable XON/XOFF supported tx data</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32784</Index>
         <SubIndex>2</SubIndex>
@@ -122,7 +130,7 @@
       <InitCmd>
         <Transition>PS</Transition>
         <Comment>Enable XON/XOFF supported rx data</Comment>
-        <Timeout>0</Timeout>
+        <Timeout>3000</Timeout>
         <Ccs>1</Ccs>
         <Index>32784</Index>
         <SubIndex>3</SubIndex>
