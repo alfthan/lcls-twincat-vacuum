@@ -29,7 +29,11 @@ VAR
     tonOvrd	:	TON;
     tonDelOK : TON;
     rtOK	:	R_TRIG;
-    tOvrd	:	TIME := T#10s;
+    tOvrd	:	TIME := T#10s; (* Override qualification time: the request must be present continuously this long before it is honored *)
+    (* Self-clearing override duration *)
+    tonOvrdMax	:	TON;
+    rtOvrdExpired	:	R_TRIG;
+    tOvrdMax	:	TIME := T#5M; (* Maximum time a qualified manual override stays active before it clears itself *)
     (* Timeouts*)
     tTimeOutDuration: TIME:= T#30S;
     tOPNtimeout: TON;
@@ -74,7 +78,8 @@ END_IF
 (*evaluate Valve open external interlock*)
 iq_stValve.xOPN_OK := i_xExtILK_OK;
 iq_stValve.xEXT_OK := i_xExtILK_OK;
-IF NOT iq_stValve.xOPN_OK and NOT tonOvrd.Q THEN
+(* A manual override never holds a command through a lost interlock *)
+IF NOT iq_stValve.xOPN_OK THEN
     iq_stValve.pv_xOPN_SW := FALSE;
     iq_stValve.eVGC_State := ERR_ExtFault;
 END_IF
@@ -87,7 +92,8 @@ END_IF
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+when the valve permission goes true for more than ten seconds consistently, remove override.
+The override is also time limited (tOvrdMax) and is never allowed to defeat the open interlock.
 *)
 
 tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=T#10S);
@@ -100,11 +106,21 @@ IF rtOK.Q AND iq_stValve.pv_xOvrdOpn THEN
 END_IF
 // Release the Force Open bit when the system override is false
 IF NOT(i_xOverrideMode) THEN  iq_stValve.pv_xOvrdOpn :=FALSE; END_IF
-//Override timer
+//Override qualification timer: the request must persist for tOvrd before it is honored
 tonOvrd(IN:=iq_stValve.pv_xOvrdOpn, PT:=tOvrd);
 
-(* Here's where the valve opens *)
-iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+(* Self-clearing override duration: a manual override never stays on indefinitely *)
+tonOvrdMax(IN:= tonOvrd.Q, PT:= tOvrdMax);
+rtOvrdExpired(CLK:= tonOvrdMax.Q);
+IF rtOvrdExpired.Q THEN
+    iq_stValve.pv_xOvrdOpn := FALSE;
+    //Log
+    fbLogger(sMsg:='Override cleared: maximum override duration elapsed', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+(* Here's where the valve opens. The override is gated by the open interlock: it may drop the
+   vacuum logic command, but it never bypasses the interlock *)
+iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode AND iq_stValve.xOPN_OK);
 
 
 ///Check valve moving position timout

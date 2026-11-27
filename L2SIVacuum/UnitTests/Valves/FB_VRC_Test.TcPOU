@@ -13,7 +13,8 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[M_INIT();
-M_Interlock();]]></ST>
+M_Interlock();
+M_Override();]]></ST>
     </Implementation>
     <Method Name="M_Check_State" Id="{a0a18af2-b8ab-43c8-9d60-82ae3d8d0bd1}">
       <Declaration><![CDATA[METHOD M_Check_State
@@ -37,7 +38,7 @@ END_VAR
       <Implementation>
         <ST><![CDATA[TEST('VRC_Startup');
 //__TRY
-VRC(i_xExtILK_OK:= Interlock_OK, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= Interlock_OK, i_xOverrideMode:= FALSE, iq_stValve=> );
 AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC q_xOPN_DO is set to true');
 AssertFalse(VRC.iq_stValve.pv_xOPN_SW,'VRC pv_xOPN_SW is set to true');
 //__CATCH(ex)
@@ -60,24 +61,60 @@ END_VAR
       <Implementation>
         <ST><![CDATA[TEST('VRC_Interlock_Active');
 VRC.M_Set_OPN_SW (TRUE);
-VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= FALSE, iq_stValve=> );
 AssertFalse(VRC.iq_stValve.pv_xOPN_SW,'VRC open_SW is set to true');
 AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC open DO is set to true');
 TEST_FINISHED_NAMED('VRC_Interlock_Active');
 
 TEST('VRC_Interlock_OK');
 VRC.M_Set_OPN_SW (TRUE);
-VRC(i_xExtILK_OK:= TRUE, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= TRUE, i_xOverrideMode:= FALSE, iq_stValve=> );
 AssertTrue(VRC.iq_stValve.pv_xOPN_SW,'VRC open_SW is set to FALSE');
 AssertTrue(VRC.iq_stValve.q_xOPN_DO,'VRC open DO is set to FALSE');
 TEST_FINISHED_NAMED('VRC_Interlock_OK');
 
 TEST('VRC_Interlock_Lost');
-VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= FALSE, iq_stValve=> );
 AssertFalse(VRC.iq_stValve.pv_xOPN_SW,'VRC open_SW is set to true');
 AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC open DO is set to true');
 TEST_FINISHED_NAMED('VRC_Interlock_Lost');
 ]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Override" Id="{4f603eff-82bc-4573-a253-e1d2272cebda}">
+      <Declaration><![CDATA[METHOD M_Override
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* A manual override must never defeat the open interlock *)
+TEST('VRC_Override_NoILK');
+VRC.tOvrd := T#0S; //qualify the override immediately, no wait inside the test
+VRC.iq_stValve.pv_xOvrdOpn := TRUE;
+VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= TRUE, iq_stValve=> );
+AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC override opened the valve with the interlock not OK');
+TEST_FINISHED_NAMED('VRC_Override_NoILK');
+
+(* With the interlock OK the qualified override still forces the valve open *)
+TEST('VRC_Override_ILK_OK');
+VRC.tOvrd := T#0S;
+VRC.iq_stValve.pv_xOvrdOpn := TRUE;
+VRC(i_xExtILK_OK:= TRUE, i_xOverrideMode:= TRUE, iq_stValve=> );
+AssertTrue(VRC.iq_stValve.q_xOPN_DO,'VRC override did not open the valve with the interlock OK');
+TEST_FINISHED_NAMED('VRC_Override_ILK_OK');
+
+(* A manual override clears itself once tOvrdMax has elapsed *)
+TEST('VRC_Override_SelfClear');
+VRC.tOvrd := T#0S;
+VRC.tOvrdMax := T#0S; //expire the override duration immediately, no wait inside the test
+VRC.iq_stValve.pv_xOvrdOpn := TRUE;
+VRC(i_xExtILK_OK:= TRUE, i_xOverrideMode:= TRUE, iq_stValve=> );
+AssertFalse(VRC.iq_stValve.pv_xOvrdOpn,'VRC override did not self-clear after tOvrdMax');
+TEST_FINISHED_NAMED('VRC_Override_SelfClear');
+
+//Restore the production timing values
+VRC.tOvrd := T#10S;
+VRC.tOvrdMax := T#5M;]]></ST>
       </Implementation>
     </Method>
   </POU>
