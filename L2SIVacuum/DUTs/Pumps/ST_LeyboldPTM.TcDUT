@@ -3,13 +3,54 @@
   <DUT Name="ST_LeyboldPTM" Id="{928359f7-41f5-4b97-ac89-aed21155294b}">
     <Declaration><![CDATA[TYPE ST_LeyboldPTM EXTENDS ST_PTM :
 STRUCT
-(* Extension of the PTM archetype for Oerlikon turbo controllers
-Applicable to:
-Mag Drive Digital
-Mag Drive S
-More?
+(*
+    ST_LeyboldPTM - turbo-pump interface for Oerlikon Leybold Vacuum controllers.
+    (The type keeps the historical "Leybold" name; the pump family has been sold
+    under both the Leybold and the Oerlikon Leybold Vacuum brand.)
+
+    PURPOSE
+        Device-model extension of the generic ST_PTM turbo-pump archetype for the
+        Oerlikon Leybold Vacuum turbo pumps used on this vacuum system. It adds the
+        remote-control, motor-power, converter-temperature and temperature-warning
+        signals that the TD20 / TD400 controllers and the "Mag Drive Digital" /
+        "Mag Drive S" PLC interface provide, on top of the ST_PTM run, interlock,
+        setpoint and state members.
+
+    USAGE
+        Published as iq_stPtm (VAR_OUTPUT) of FB_PTM_TurboDrive and
+        FB_PTM_MagDriveDigital. With the serial link fitted, FB_OERLIKON_TO_PTM
+        (TD20), FB_OERLIKON_TD400_TO_PTM (TD400) or the method
+        FB_PTM_TurboDrive.M_Serial_IO fills the readback members from the controller
+        status message; with the hard-wired interface, FB_PTM_MagDriveDigital fills
+        them from its terminals. Members that carry a pytmc pragma are exported to
+        EPICS ('io: i' = readback record, 'io: io' = command switch record); the
+        inherited ST_PTM members are documented on ST_PTM, not here.
+        The status message itself is defined in Oerlikon Leybold manual 17200048.
+
+    OBJECTIVES
+        - State for every numeric member whether it holds the controller's raw
+          reply or a converted engineering value, and in which unit, so an EPICS
+          or integrator consumer can scale the readback rather than guess.
+        - Keep the per-controller differences visible at the declaration: several
+          members are filled by more than one mapper and the mappers do not all
+          apply the same scaling (see i_diPwr).
+        - Leave no member undocumented, so the remote command, the power and
+          temperature readbacks and the temperature-warning input are unambiguous.
+
+    HISTORY
+        2026-11-27 / Scirix Agent
+            Added this header and a meaning / units comment on every member.
+            Comment only: no declaration, member order or pytmc pragma change
+            (audit finding #563, convention conv_321640e095c0).
+        2018-10-12 / Maggie Ghaly (mghaly@slac.stanford.edu)
+            Struct present from the first release of the L2SIVacuum library
+            (commit 3fb2c8e).
 *)
 //Readbacks
+    /// Rotor deceleration status: TRUE while the pump is braking / has not yet
+    /// reached speed. Read from status-word bit 5 by FB_OERLIKON_TO_PTM,
+    /// FB_OERLIKON_TD400_TO_PTM and FB_PTM_TurboDrive.M_Serial_IO, and from the
+    /// DECEL terminal input by FB_PTM_MagDriveDigital. Unitless flag, active high.
     {attribute 'pytmc' := '
     pv: DECEL;
     field: ZNAM FALSE;
@@ -17,12 +58,34 @@ More?
     io: i;
     '}
     i_xDecel	:	BOOL;
+    /// Motor input power (PWR_RBV), engineering value truncated to a whole number.
+    /// The scale depends on the mapper that fills it, because the mappers scale the
+    /// same raw replies (controller current P5 in units of 0.1 A and DC-link
+    /// voltage P4 in units of 0.1 V) differently:
+    ///   - FB_OERLIKON_TO_PTM / FB_PTM_TurboDrive.M_Serial_IO (TD20): raw P5 * raw
+    ///     P4 * 0.01, i.e. the result is in W.
+    ///   - FB_OERLIKON_TD400_TO_PTM (TD400): raw P5 * raw P4 * 0.1, i.e. the result
+    ///     is in units of 0.1 W, so divide by 10 to read watts.
+    /// FB_PTM_MagDriveDigital does not write this member, so it stays at its
+    /// initial value on the hard-wired interface. Values are truncated by
+    /// LREAL_TO_DINT, so sub-unit fractions are lost.
     {attribute 'pytmc' := '
     pv: PWR_RBV;
     io: i;
     '}
     i_diPwr   	:   DINT;
+    /// Frequency-converter (electronics) temperature. Filled with the controller's
+    /// parameter 11 (wConverterTemp_P11) verbatim by FB_OERLIKON_TO_PTM,
+    /// FB_OERLIKON_TD400_TO_PTM and FB_PTM_TurboDrive.M_Serial_IO, i.e. the raw
+    /// integer reply with no PLC scaling, so it is in the unit the controller uses
+    /// for parameter 11 (see Oerlikon Leybold manual 17200048) - not a converted
+    /// engineering value. FB_PTM_MagDriveDigital does not write it. The member has
+    /// no pytmc pragma, so it carries no PV declaration of its own here.
     i_diElecTemp:	DINT;
+    /// Overtemperature indication from the controller: TRUE when status-word bit 7
+    /// is set. The mappers note that the manual specifies bit 7 as a temperature
+    /// warning while it can behave as a fault, so treat TRUE as an overtemperature
+    /// condition. Written by the serial mappers only. Unitless flag, active high.
     {attribute 'pytmc' := '
     pv: OVR_TEMP;
     field: ZNAM FALSE;
@@ -30,9 +93,21 @@ More?
     io: i;
     '}
     i_xTempFault:	BOOL;
+    /// Pump error input, wired normally closed: TRUE = no error present, FALSE =
+    /// pump error or broken/unpowered loop. Assigned by FB_PTM_TurboDrive.ACT_IO
+    /// from the inverted i_xFaultNC terminal input; FB_PTM_MagDriveDigital instead
+    /// reports the error in i_xFault and leaves this member untouched.
     i_xNCError	:	BOOL; //Using normally closed wiring
 
 //Controls
+    /// Remote-control enable (EPICS REMOTE, io: io - command and readback). Two fill
+    /// paths, depending on the interface in use:
+    ///   - FB_PTM_MagDriveDigital drives it as an output to the Mag Drive terminal,
+    ///     TRUE from 5 s (tofRemoteDelay) after the run command.
+    ///   - FB_OERLIKON_TO_PTM, FB_OERLIKON_TD400_TO_PTM and
+    ///     FB_PTM_TurboDrive.M_Serial_IO write it as the readback of status-word
+    ///     bit 15 ("remote control enabled").
+    /// Unitless flag, active high.
     {attribute 'pytmc' := '
     pv: REMOTE;
     field: ZNAM FALSE;
@@ -40,7 +115,11 @@ More?
     io: io;
     '}
     q_xRemote :BOOL;
-    i_xRemote : BOOL; (* Remote control enabled *)
+    /// Remote-control status from status-word bit 15: TRUE = the controller is under
+    /// remote control. Written only by FB_PTM_TurboDrive.M_Serial_IO (the standalone
+    /// serial mappers write the same bit into q_xRemote instead). No pytmc pragma,
+    /// so it carries no PV declaration of its own here. Unitless flag, active high.
+    i_xRemote : BOOL;
 END_STRUCT
 END_TYPE
 ]]></Declaration>
