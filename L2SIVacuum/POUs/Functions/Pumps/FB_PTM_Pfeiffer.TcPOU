@@ -2,7 +2,13 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_Pfeiffer" Id="{f61aaad0-85b4-4244-b8a7-58d7d76a340e}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Pfeiffer Turbo pump connected to the TM700 and TC400 Controllers.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+ q_PumpingStation is the Start/Stop interlock output to the pumping station. It follows the run command only while
+ iq_stPTM.xExtRunOk (from the i_xExtILKOK permit) is TRUE and iq_stPTM.i_xFault is FALSE; that gate is the sole
+ authority for the output. The error-reset path pulses q_xReset only and never energizes q_PumpingStation, so a
+ manual reset cannot bypass the permit input or re-energize the pumping station through a fault.
+ History: initial version.
+          2026-11-27 - reset path no longer drives q_PumpingStation (audit finding #1214).*)
 FUNCTION_BLOCK FB_PTM_Pfeiffer EXTENDS FB_Pump
 VAR_INPUT
     i_xExtIlkOK : BOOL; // Connect to external interlock logic, TRUE if not used.
@@ -22,7 +28,7 @@ VAR
      i_xRemote AT%I*: BOOL;
 
     q_RunDO AT%Q*: BOOL; // Start/Stop for TC110 link this output to the Pumping station bit
-    q_PumpingStation AT%Q*: BOOL; // Start/Stop interlock
+    q_PumpingStation AT%Q*: BOOL; // Start/Stop interlock; driven only by the xExtRunOk/i_xFault gate below
     q_xRemote AT%Q*: BOOL;
     q_xReset AT%Q*: BOOL;
 END_VAR
@@ -65,13 +71,11 @@ END_IF
 
 (*Error Reset*)
 (* to reset the Reset Bit *)
+(* Reset pulses q_xReset only. It must not drive q_PumpingStation: the xExtRunOk / i_xFault gate above is the
+   sole authority for the pumping-station interlock output, so a manual reset cannot energize the pumping
+   station while the external interlock permit is FALSE or while the pump reports a fault. *)
  IF (iq_stPTM.xResetSW ) THEN
     iq_stPTM.q_xReset := TRUE;
-    q_PumpingStation := TRUE;
- END_IF
-
- IF (iq_stPTM.xResetSW) AND (iq_stPTM.i_xFault)  THEN
-    q_PumpingStation := TRUE;
  END_IF
  TOF_RESET (IN:= iq_stPTM.q_xReset, Q => );
  IF TOF_RESET.Q THEN
