@@ -156,6 +156,28 @@ STRUCT
     /// Full scale pressure in Torr for baratron pressure conversion
     rFULL_SCALE: REAL := 1000;
 
+    (* Error / diagnostics *)
+    /// TRUE while a latched device fault is present, cleared only by pv_xAlmRst
+    {attribute 'pytmc' := '
+    pv: ERROR;
+    field: ZNAM NO ERROR ;
+    field: ONAM ERROR PRESENT ;
+    io: o;
+    '}
+    bErrorPresent : BOOL;
+    /// Explicit message describing the latched fault
+    {attribute 'pytmc' := '
+    pv: ErrMsg;
+    io: o;
+    '}
+    sErrorMessage : STRING;
+    /// Alarm reset request; set TRUE to acknowledge and clear a latched fault
+    {attribute 'pytmc' := '
+    pv: ALM_RST;
+    io: io;
+    '}
+    pv_xAlmRst : BOOL;
+
 END_STRUCT
 END_TYPE
 ]]></Declaration>

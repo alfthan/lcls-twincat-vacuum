@@ -3,6 +3,11 @@
   <POU Name="FB_MX7M" Id="{15379e40-3aed-42d9-b6b1-5d3c97c28cce}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function is for the Cold Cathode MX7M from Televac. *)
 (*This function provides ILK and Set Point Protection for the Cold Cathode*)
+(* History: *)
+(*  2026-11-27: The HV turn-on command is now bounded. When the turn-on timer expires *)
+(*              without a valid pressure reading the command counts as failed: a *)
+(*              latched fault (IG.bErrorPresent/IG.sErrorMessage) is raised, logged, *)
+(*              and HV is disabled until the fault is acknowledged (IG.pv_xAlmRst). *)
 FUNCTION_BLOCK FB_MX7M EXTENDS FB_GaugeBase
 VAR_IN_OUT
 
@@ -108,6 +113,24 @@ END_IF
 (*Pressure gauge OK checks*)
 tGaugeTurnOnTmr(IN:=IG.q_xHV_DIS, PT:=T#10S, Q=>IG.xTurnOnTime);
 
+(* HV turn-on supervision *)
+(* The commanded HV turn-on is bounded by tGaugeTurnOnTmr. If the gauge has not *)
+(* reached a valid pressure reading when the window expires, the command counts as *)
+(* failed instead of waiting forever: an explicit latched fault is raised (and logged *)
+(* by ACT_Logger) and HV is disabled. *)
+IF IG.q_xHV_DIS AND tGaugeTurnOnTmr.Q AND (IG.eState <> Valid) THEN
+    IG.bErrorPresent := TRUE;
+    IG.sErrorMessage := CONCAT(sPath, ' HV Turn On Timeout');
+    IG.q_xHV_DIS := FALSE;
+    IG.xHV_SW := FALSE;
+END_IF
+
+(* A latched HV turn-on fault keeps HV off until it is acknowledged *)
+IF IG.bErrorPresent THEN
+    IG.q_xHV_DIS := FALSE;
+    IG.xHV_SW := FALSE;
+END_IF
+
 //Backwards compatibility
 IG.xPRESS_OK := (IG.eState = Valid) OR IG.xBAKEOUT;
 
@@ -116,6 +139,9 @@ IG.xAT_VAC := (IG.xPRESS_OK AND (IG.rPRESS < IG.rVAC_SP)) OR IG.xBAKEOUT AND (IG
 
 (*Logging*)
 ACT_Logger();
+
+(*Clear latched faults on the alarm reset request*)
+ACT_ResetAlarms();
 
 (*Soft IO Linking*)
 IO();
@@ -161,6 +187,20 @@ IF (IG.xLog) THEN
           END_CASE
       ePrevState := IG.eState;
       END_IF
+END_IF
+
+// Log latched gauge faults (always logged, independent of xLog)
+tErrorPresent(CLK := IG.bErrorPresent);
+IF tErrorPresent.Q THEN fbLogger(sMsg := IG.sErrorMessage, eSevr := TcEventSeverity.Critical); END_IF]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="ACT_ResetAlarms" Id="{9b5f5d5e-3c2f-4d3b-9d0a-6d2f4a1c8e77}">
+      <Implementation>
+        <ST><![CDATA[(*Acknowledge and clear the latched gauge fault*)
+IG.bErrorPresent R= IG.pv_xAlmRst;
+IF (IG.pv_xAlmRst) THEN
+    IG.sErrorMessage := '';
+    IG.pv_xAlmRst := FALSE;
 END_IF]]></ST>
       </Implementation>
     </Action>
