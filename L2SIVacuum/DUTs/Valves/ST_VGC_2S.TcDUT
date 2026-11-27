@@ -24,6 +24,37 @@ STRUCT
     '}
     rAT_VAC_HYS_DS	:	REAL :=0.000001;	// Hysteresis of the vacuum sp downstream
     rAT_VAC_SP_LAST_DS :	REAL :=0.000001 ;
+(* Command / permit data of the 2-setpoint gate valve. These used to be
+   separate VAR_INPUTs of FB_VGC_2S; they live in the interface struct so the
+   whole command/status set travels through one VAR_IN_OUT reference. *)
+    {attribute 'pytmc' := '
+    pv: Dis_DPIlk;
+    field: ZNAM ILK ACTIVE ;
+    field: ONAM ILK DISABLED ;
+    io: io;
+    '}
+    xDis_DPIlk	:	BOOL := FALSE;	// Command: disable the differential-pressure interlock
+    {attribute 'pytmc' := '
+    pv: EPS_OK;
+    field: ZNAM NOT OK ;
+    field: ONAM OK ;
+    io: io;
+    '}
+    xEPS_OK	:	BOOL := TRUE;	// Permit: external EPS interlock satisfied
+    {attribute 'pytmc' := '
+    pv: PMPS_ILK_OK;
+    field: ZNAM NOT OK ;
+    field: ONAM OK ;
+    io: io;
+    '}
+    xPMPS_ILK_OK	:	BOOL;	// Permit: external PMPS interlock satisfied
+    {attribute 'pytmc' := '
+    pv: MPS_FAULT_OK;
+    field: ZNAM MPS FAULT ;
+    field: ONAM MPS OK ;
+    io: i;
+    '}
+    xMPS_OK	:	BOOL;	// Status: MPS fast-fault OK for this valve
 END_STRUCT
 END_TYPE]]></Declaration>
   </DUT>

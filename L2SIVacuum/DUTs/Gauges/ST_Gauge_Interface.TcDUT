@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_Gauge_Interface" Id="{7c1f8d2a-5b64-4f43-9f0e-2f0f2b6f6a11}">
+    <Declaration><![CDATA[(* Interface struct for the generic gauge base block FB_Gauge.
+   ST_VG is the block-specific gauge interface: it already carries the
+   command bits (xHV_SW, xAutoOn) and the status (rPRESS, xPRESS_OK, xAT_VAC,
+   eState, ...) of a gauge, so FB_Gauge reuses it instead of inventing a
+   second gauge structure.
+
+   History
+   2026-11-27  Interface refactor: introduced so FB_Gauge carries its complete
+               command/status set in one VAR_IN_OUT struct.
+*)
+TYPE ST_Gauge_Interface EXTENDS ST_VG:
+STRUCT
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

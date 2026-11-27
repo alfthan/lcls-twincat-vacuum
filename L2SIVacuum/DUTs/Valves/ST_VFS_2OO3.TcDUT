@@ -1,0 +1,96 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_VFS_2OO3" Id="{eff56fe9-42a8-4c38-bc68-b45d54885d3f}">
+    <Declaration><![CDATA[(* Interface struct for the 2-out-of-3 fast shutter (FB_VFS_2OO3).
+   Extends the common fast-shutter interface ST_VFS with the three gauge trigger
+   inputs, the 2oo3 mode selector and the per-gauge fault counters, so that
+   FB_VFS_2OO3 carries all of its command/status data in this single struct.
+
+   History
+   2026-11-27  Interface refactor: introduced so FB_VFS_2OO3 and
+               FB_VFS_2OO3Interface exchange one VAR_IN_OUT struct instead of
+               a sprawl of individual AT%I*/AT%Q* terminals.
+*)
+TYPE ST_VFS_2OO3 EXTENDS ST_VFS:
+STRUCT
+(* 3x fast trigger inputs from the cold cathode gauge controller.
+   All three CC gauge cards have to be installed in the same controller. *)
+    {attribute 'pytmc' := '
+    pv: TRIG_IG1;
+    field: ZNAM TRIG_OFF;
+    field: ONAM TRIG_ON;
+    io: i;
+    '}
+    i_xTriggerIG1	:	BOOL;	// Fast trigger input from cold cathode gauge 1
+    {attribute 'pytmc' := '
+    pv: TRIG_IG2;
+    field: ZNAM TRIG_OFF;
+    field: ONAM TRIG_ON;
+    io: i;
+    '}
+    i_xTriggerIG2	:	BOOL;	// Fast trigger input from cold cathode gauge 2
+    {attribute 'pytmc' := '
+    pv: TRIG_IG3;
+    field: ZNAM TRIG_OFF;
+    field: ONAM TRIG_ON;
+    io: i;
+    '}
+    i_xTriggerIG3	:	BOOL;	// Fast trigger input from cold cathode gauge 3
+
+    {attribute 'pytmc' := '
+    pv: PRESS_OK_IG1;
+    field: ZNAM OFF;
+    field: ONAM ON;
+    io: i;
+    '}
+    i_xPress_OK_IG1	:	BOOL;	// Gauge 1 connected and pressure reading valid
+    {attribute 'pytmc' := '
+    pv: PRESS_OK_IG2;
+    field: ZNAM OFF;
+    field: ONAM ON;
+    io: i;
+    '}
+    i_xPress_OK_IG2	:	BOOL;	// Gauge 2 connected and pressure reading valid
+    {attribute 'pytmc' := '
+    pv: PRESS_OK_IG3;
+    field: ZNAM OFF;
+    field: ONAM ON;
+    io: i;
+    '}
+    i_xPress_OK_IG3	:	BOOL;	// Gauge 3 connected and pressure reading valid
+
+(* Commands *)
+    {attribute 'pytmc' := '
+    pv: VFS_2OO3_MODE;
+    io: io;
+    '}
+    e2OO3_MODE	:	E_2OO3_MODE;	// 2oo3 mode selector (2oo3 or single gauge channel)
+    {attribute 'pytmc' := '
+    pv: VFS_RESET_FAULT_COUNTER;
+    field: ZNAM FALSE;
+    field: ONAM RESET;
+    io: io;
+    '}
+    xResetFaultCounter	:	BOOL;	// Reset the per-gauge fault counters
+
+(* Status *)
+    {attribute 'pytmc' := '
+    pv: FLT_COUNT_IG1;
+    io: i;
+    '}
+    nFltCount_IG1	:	UINT;	// Fault counter for gauge 1
+    {attribute 'pytmc' := '
+    pv: FLT_COUNT_IG2;
+    io: i;
+    '}
+    nFltCount_IG2	:	UINT;	// Fault counter for gauge 2
+    {attribute 'pytmc' := '
+    pv: FLT_COUNT_IG3;
+    io: i;
+    '}
+    nFltCount_IG3	:	UINT;	// Fault counter for gauge 3
+
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

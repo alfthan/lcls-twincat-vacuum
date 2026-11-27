@@ -19,7 +19,7 @@ STRUCT
     field: ONAM CLOSE;
     io: io ;
     '}
-    xCLS_SW AT%Q*:BOOL; (*external open signal e.g epics*)
+    xCLS_SW : BOOL; (*external close signal e.g epics*)
 
 (* Alarm Outputs *)
     {attribute 'pytmc' := '
@@ -51,6 +51,36 @@ STRUCT
     '}
     sVetoDeviceName: STRING;
 
+(* Interface signals that used to be individual AT%I*/AT%Q* terminals of
+   FB_VFS / FB_VFS_Interface. They are members of the interface struct so the
+   caller links struct members and the block declares no terminals at all. *)
+    {attribute 'pytmc' := '
+    pv: PRESS_OK;
+    field: ZNAM OFF ;
+    field: ONAM ON ;
+    io: i;
+    '}
+    xPRESS_OK	:	BOOL;	// Status: pressure OK bit published to veto/interlock consumers
+    {attribute 'pytmc' := '
+    pv: MPS_FAULT_OK;
+    field: ZNAM MPS FAULT ;
+    field: ONAM MPS OK ;
+    io: i;
+    '}
+    xMPS_OK		:	BOOL;	// Status: MPS fast-fault OK, TRUE while open and untriggered
+    {attribute 'pytmc' := '
+    pv: PMPS_ILK_OK;
+    field: ZNAM NOT OK ;
+    field: ONAM OK ;
+    io: io;
+    '}
+    xPMPS_OK	:	BOOL;	// Permit: external PMPS interlock satisfied
+    i_xPress_OK	:	BOOL;	// Permit: fast pressure sensor OK (link to the gauge xPRESS_OK)
+    i_xVetoValveOpenDO	:	BOOL;	// Veto valve open command readback
+    i_xVetoValveClosed	:	BOOL;	// Veto valve closed limit switch
+    q_xClose_A	:	BOOL;	// Redundant fast close command A
+    q_xClose_B	:	BOOL;	// Redundant fast close command B
+    q_xClose_C	:	BOOL;	// Redundant fast close command C
 END_STRUCT
 END_TYPE]]></Declaration>
   </DUT>
