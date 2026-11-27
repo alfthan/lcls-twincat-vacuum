@@ -4,11 +4,14 @@
     <Declaration><![CDATA[(*This function block is to be used whenever deivce data going to be read over ADS*)
 (*The remote plc has to instantiate this function block in order to write a watchdog variable*)
 (*that the ADS read function expects to keep checking*)
+(*The period at which the counter is written is the GVL Constants constant                 *)
+(*gc_tAdsWatchdogWritePeriod; it can be changed per device through i_tWatchdogTime.       *)
 FUNCTION_BLOCK FB_ADS_WATCHDOG
 VAR_INPUT
     sNetId : String; //NetID of the Destination PLC controller
     nPort : uint; // port number
     sVarName : string;// the variable name of the watchdog on the remote plc.
+    i_tWatchdogTime : TIME := gc_tAdsWatchdogWritePeriod; //Period at which the remote PLC writes its watchdog counter; default is GVL Constants, lengthen it per device on a slow remote PLC
 END_VAR
 VAR_OUTPUT
     bError:BOOL;
@@ -35,7 +38,7 @@ fb_WriteWatchdog(
     nIdxGrp:= ,
     nIdxOffs:= ,
     sVarName:= sVarName,
-    tWatchdogTime:= t#30ms,
+    tWatchdogTime:= i_tWatchdogTime,
     bSendNow:= ftReset_Watchdog.Q ,
     bBusy=> ,
     nLastCnt=>  ,

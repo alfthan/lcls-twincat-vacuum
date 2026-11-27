@@ -4,6 +4,12 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Cross-PLC ADS watchdog: the remote PLC writes its watchdog counter once per this period. *)
+    (* The ADS reader blocks (FB_TBOOL_ADS, FB_TVGC_ADS, ...) check that counter over a longer  *)
+    (* window, so the write period can be lengthened per device on a busy remote PLC without    *)
+    (* the readers reporting a watchdog error.                                                 *)
+    gc_tAdsWatchdogWritePeriod : TIME := T#30MS; // Period at which the remote PLC writes its ADS watchdog counter
 END_VAR
 ]]></Declaration>
   </GVL>
