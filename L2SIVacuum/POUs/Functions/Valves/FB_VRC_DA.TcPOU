@@ -3,7 +3,27 @@
   <POU Name="FB_VRC_DA" Id="{2e9f69bd-e3b1-4c33-97d1-1886ac2c3ed4}" SpecialFunc="None">
     <Declaration><![CDATA[(* This Function Block Implements Basic Functionality for dual acting valves. EPs is implemented so that there is interlock Open and Interlock close,
 This function block is interloked by an input . This is so developers can interface with custom
-interlocking logic outside this function block.*)
+interlocking logic outside this function block.
+
+Override policy (conv_eeb5d87743fc: manual overrides are time-qualified, self-clearing and never bypass safety
+interlocks). Two independent manual overrides exist: open (ST_ValveBase.pv_xOvrdOpn / FORCE_OPN) and close
+(ST_VRC_NO.pv_xOvrdCls / FORCE_CLS).
+- An override is only honoured while the plant-wide override mode (i_xOverrideMode) is enabled and after the
+  request has been held continuously for the qualification time tOvrd, which protects against blips.
+- Each override clears itself automatically once either:
+    1) safe condition restored - the permit for that direction (i_OPN_OK / i_CLS_OK) has been continuously true
+       for tOvrd, so the override is no longer needed (tonDelOK / tonDelCLS), or
+    2) duration expiry - the override has been in effect (qualified request AND override mode enabled) for the
+       configured maximum duration tOvrdMaxDuration (tonOvrdMax).
+  Both clears are logged at Warning severity and reset the retained operator request to FALSE, and an expired
+  override stops driving q_xOPN_DO / q_xCLS_DO in the same cycle.
+- The override only replaces the vacuum permit term of the open/close command; the site interlocks evaluated by
+  the caller (EPS/MPS/PMPS) are unaffected.
+History:
+2026-11-27  Scirix agent (task #345)  Added the self-clearing override: permit-restored reset (tonDelOK /app/namespaces/d6f73763-31bc-4bea-8f49-b5906058e129/
+                                      tonDelCLS) and configured duration expiry (tonOvrdMax / tOvrdMaxDuration).
+                                      Previously an override was released only when the plant-wide override
+                                      bit dropped. *)
 (* Note Interlock Logic is External *)
 {attribute 'no_check'}
 FUNCTION_BLOCK FB_VRC_DA EXTENDS FB_Valve
@@ -29,10 +49,13 @@ VAR
     sPath: STRING;
     xFirstPass	:	BOOL;
     fbFSInit		:	R_TRIG;
-    tonOvrd	:	TON;
-    tonDelOK : TON;
-    rtOK	:	R_TRIG;
-    tOvrd	:	TIME := T#10s;
+    tonOvrd : TON;                              // Override qualification timer, TRUE once an override request has been held for tOvrd
+    tonDelOK : TON;                             // Open permit debounce, TRUE once the open permit has been continuously true for tOvrd
+    tonDelCLS : TON;                            // Close permit debounce, TRUE once the close permit has been continuously true for tOvrd
+    tonOvrdMax : TON;                           // Override duration timer, runs while an override is in effect and expires it after tOvrdMaxDuration
+    tOvrd : TIME := T#10s;                      // Override qualification and de-qualification time
+    tOvrdMaxDuration : TIME := T#30M;           // Configured maximum duration an override may stay in effect before it self-clears
+    xOvrdInEffect : BOOL;                       // TRUE while a qualified override is actually in effect (override mode enabled and a request latched)
     (* Timeouts*)
     tTimeOutDuration: TIME:= T#30S;
     tOPNtimeout: TON;
@@ -84,27 +107,68 @@ END_IF
 
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
-Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+Solution: Override only after tOvrd of continuous request (protects against blips), and never let an override stay
+in force indefinitely: it clears itself once the permit for that direction has been restored for tOvrd, or once it
+has been in effect for the configured maximum duration tOvrdMaxDuration.
 *)
 
+(* Safe-condition reset, open direction. Level triggered on purpose instead of on the rising edge of tonDelOK.Q:
+   an override requested while the open permit has already been good for longer than tOvrd is not needed either,
+   and the level check clears that one as well. *)
+tonDelOK(IN:= i_OPN_OK, PT:= tOvrd);
+IF tonDelOK.Q AND iq_stValve.pv_xOvrdOpn THEN
+    iq_stValve.pv_xOvrdOpn := FALSE;
+    IF (iq_stValve.eState = OPEN) AND i_xOverrideMode THEN iq_stValve.pv_xOPN_SW := TRUE; END_IF
+    //Log
+    fbLogger(sMsg:='Open override cleared, open permit restored', eSevr:=TcEventSeverity.Warning);
+END_IF
 
-// Release the Force Open bit when the system override is false
+(* Safe-condition reset, close direction *)
+tonDelCLS(IN:= i_CLS_OK, PT:= tOvrd);
+IF tonDelCLS.Q AND iq_stValve.pv_xOvrdCls THEN
+    iq_stValve.pv_xOvrdCls := FALSE;
+    IF (iq_stValve.eState = CLOSED) AND i_xOverrideMode THEN iq_stValve.pv_xCLS_SW := TRUE; END_IF
+    //Log
+    fbLogger(sMsg:='Close override cleared, close permit restored', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+// Release the Force Open / Force Close bits when the system override is false, so a stale request cannot take
+// effect later when the override mode is enabled for an unrelated reason
 IF NOT(i_xOverrideMode) THEN
     iq_stValve.pv_xOvrdOpn :=FALSE;
     iq_stValve.pv_xOvrdCls := FALSE;
 END_IF
-//Override timer
+//Override qualification timer
 tonOvrd(IN:=(iq_stValve.pv_xOvrdOpn OR iq_stValve.pv_xOvrdCls), PT:=tOvrd);
+
+(* Duration expiry. A manual override must not stay in force indefinitely: the timer runs while a qualified
+   override is actually in effect and releases the override once tOvrdMaxDuration has elapsed, so that the normal
+   vacuum permit logic resumes without anybody having to remember the override. *)
+xOvrdInEffect := tonOvrd.Q AND i_xOverrideMode;
+tonOvrdMax(IN:= xOvrdInEffect, PT:= tOvrdMaxDuration);
+IF tonOvrdMax.Q THEN
+    // Duration expired: stop overriding in this same cycle, before the outputs are evaluated below
+    xOvrdInEffect := FALSE;
+    IF (iq_stValve.pv_xOvrdOpn OR iq_stValve.pv_xOvrdCls) THEN
+        iq_stValve.pv_xOvrdOpn := FALSE;
+        iq_stValve.pv_xOvrdCls := FALSE;
+        // A request that is still being written from EPICS counts as a new override, so both timers are reset
+        // here and the next request has to qualify again for tOvrd with a full tOvrdMaxDuration window
+        tonOvrd(IN:= FALSE, PT:= tOvrd);
+        tonOvrdMax(IN:= FALSE, PT:= tOvrdMaxDuration);
+        //Log
+        fbLogger(sMsg:='Override expired after configured duration', eSevr:=TcEventSeverity.Warning);
+    END_IF
+END_IF
 
 (* Here's where the valve Actuates *)
 (*Evaluate EPS interlocks and the override*)
-iq_stValve.q_xCLS_DO  := (i_CLS_OK AND iq_stValve.pv_xCLS_SW AND NOT iq_stValve.pv_xOPN_SW) OR (tonOvrd.Q AND iq_stValve.pv_xOvrdCls AND i_xOverrideMode);
-iq_stValve.q_xOPN_DO  := (i_OPN_OK AND iq_stValve.pv_xOPN_SW AND NOT iq_stValve.pv_xCLS_SW) OR (tonOvrd.Q AND iq_stValve.pv_xOvrdOpn AND i_xOverrideMode) ;
+iq_stValve.q_xCLS_DO  := (i_CLS_OK AND iq_stValve.pv_xCLS_SW AND NOT iq_stValve.pv_xOPN_SW) OR (xOvrdInEffect AND iq_stValve.pv_xOvrdCls);
+iq_stValve.q_xOPN_DO  := (i_OPN_OK AND iq_stValve.pv_xOPN_SW AND NOT iq_stValve.pv_xCLS_SW) OR (xOvrdInEffect AND iq_stValve.pv_xOvrdOpn) ;
 
 (*evaluate Valve open external interlock*)
 
-IF NOT iq_stValve.xOPN_OK and NOT tonOvrd.Q THEN
+IF NOT iq_stValve.xOPN_OK and NOT xOvrdInEffect THEN
     iq_stValve.pv_xOPN_SW := FALSE;
     iq_stValve.eVGC_State := ERR_ExtFault;
 END_IF
@@ -113,7 +177,7 @@ IF (iq_stValve.q_xOPN_DO) AND (iq_stValve.xOPN_OK) THEN
     iq_stValve.eVGC_State := AtVacuum;
 END_IF
 
-IF NOT iq_stValve.xCLS_OK and NOT tonOvrd.Q THEN
+IF NOT iq_stValve.xCLS_OK and NOT xOvrdInEffect THEN
     iq_stValve.pv_xCLS_SW := FALSE;
     iq_stValve.eVGC_State := ERR_ExtFault;
 END_IF
@@ -207,7 +271,7 @@ tAction2(CLK:= iq_stValve.q_xCLS_DO);
 IF tAction.Q THEN fbLogger(sMsg:='Valve commanded closed', eSevr:=TcEventSeverity.Info); END_IF
 
 // Log override mode enabled
-tOverrideActivated(CLK:= (tonOvrd.Q AND i_xOverrideMode));
+tOverrideActivated(CLK:= xOvrdInEffect);
 IF tOverrideActivated.Q THEN fbLogger(sMsg:='Valve override mode activated', eSevr:=TcEventSeverity.Warning); END_IF
 ]]></ST>
       </Implementation>
