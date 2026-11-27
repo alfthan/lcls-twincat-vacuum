@@ -79,7 +79,14 @@ IF rtExecute.Q THEN
     q_sResult:= '';
     MEMSET(destAddr:=ADR(q_abSendData), fillByte:=0, n:=SIZEOF(q_abSendData));
     MEMSET(destAddr:=ADR(q_abResponseData), fillByte:=0, n:=SIZEOF(q_abResponseData));
-    iStep := 10;
+    (* Validate the caller-supplied VAR_IN_OUT references before any use,
+       an unassigned buffer reference would otherwise fault the PLC *)
+    IF NOT __ISVALIDREF(iq_stSerialRXBuffer) OR NOT __ISVALIDREF(iq_stSerialTXBuffer) THEN
+        q_sResult := 'Invalid VAR_IN_OUT reference: serial RX or TX buffer is not assigned.';
+        iStep := 9000;
+    ELSE
+        iStep := 10;
+    END_IF
 END_IF
 
 CASE iStep OF

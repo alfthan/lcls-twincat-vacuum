@@ -29,6 +29,13 @@ VAR
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[
+(* Validate the caller-supplied VAR_IN_OUT reference before any dereference,
+   drop the solenoid command instead of writing through an unassigned reference *)
+IF NOT __ISVALIDREF(iq_stValve) THEN
+    xCLS_DO := FALSE;
+    RETURN;
+END_IF
+
 IF NOT iq_stValve.xCLS_OK THEN
 iq_stValve.pv_xCLS_SW := FALSE;
 END_IF
@@ -51,10 +58,16 @@ iq_stValve.xCLS_DO := (iq_stValve.pv_xCLS_SW AND iq_stValve.xCLS_OK) OR (tonOvrd
     </Implementation>
     <Action Name="ACT_IO" Id="{c25df29b-6cf5-4052-842b-22ecdcba8c16}">
       <Implementation>
-        <ST><![CDATA[(*inputs*)
-iq_stValve.xOverrideMode := i_xOverrideMode;
-(*outputs*)
-xCLS_DO:= iq_stValve.xCLS_DO;]]></ST>
+        <ST><![CDATA[(* Validate the caller-supplied VAR_IN_OUT reference before any dereference,
+   the solenoid output is dropped instead of reading through an unassigned reference *)
+IF __ISVALIDREF(iq_stValve) THEN
+    (*inputs*)
+    iq_stValve.xOverrideMode := i_xOverrideMode;
+    (*outputs*)
+    xCLS_DO:= iq_stValve.xCLS_DO;
+ELSE
+    xCLS_DO:= FALSE;
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Method Name="M_Close" Id="{25a4b227-8441-4ebd-93be-fa48f91d9458}">

@@ -14,6 +14,14 @@ END_VAR]]></Declaration>
 to the generic turbo structures *)
 //Use this function to map IO as a temporary solution if we don't change method FB_PTM_TurboDrive.M_Serial_IO and ST_LeyboldPTM structure
 
+(* Validate the caller-supplied VAR_IN_OUT references before any dereference,
+   an unassigned reference would otherwise fault the PLC *)
+IF NOT __ISVALIDREF(iq_stPTM)
+OR NOT __ISVALIDREF(iq_stTD400Status)
+OR NOT __ISVALIDREF(iq_stTD400Control) THEN
+    RETURN;
+END_IF
+
 (* Readbacks *)
 iq_stPTM.i_xAccel := iq_stTD400Status.wStatusWord.4;
 iq_stPTM.i_xDecel := iq_stTD400Status.wStatusWord.5;

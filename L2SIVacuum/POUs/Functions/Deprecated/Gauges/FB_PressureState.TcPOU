@@ -29,6 +29,13 @@ A. Wallace, 2016-8-31
 This FB serves to evaluate the state of the pressure based on the raw voltage, pressure, and gauge state.
 
 *)
+(* Validate the caller-supplied VAR_IN_OUT reference before any dereference,
+   an unassigned reference would otherwise be written through blindly *)
+IF NOT __ISVALIDREF(iq_stVG) THEN
+    q_eState := PressInvalid;
+    RETURN;
+END_IF
+
 // Is the gauge plugged in, and within a reasonable range?
 IF i_rV < i_rVMin THEN
     q_eState := GaugeDisconnected;

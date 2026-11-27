@@ -28,6 +28,12 @@ END_VAR]]></Declaration>
 Scott Stubbs & Alex W.
 *)
 
+(* Validate the caller-supplied VAR_IN_OUT reference before any dereference,
+   an unassigned reference would otherwise be read and written every scan *)
+IF NOT __ISVALIDREF(iq_stPTM) THEN
+    RETURN;
+END_IF
+
 (* Switch processing *)
 TOF_START.IN := iq_stPTM.i_xStart;
 TOF_START();

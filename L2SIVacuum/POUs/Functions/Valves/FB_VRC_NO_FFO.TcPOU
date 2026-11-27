@@ -33,6 +33,14 @@ END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(*VRC_NO*)
 
+(* Validate the caller-supplied VAR_IN_OUT references before any dereference,
+   an unassigned reference would otherwise fault the PLC in the FFO and arbiter calls *)
+IF NOT __ISVALIDREF(io_fbFFHWO) OR NOT __ISVALIDREF(fbArbiter) THEN
+    (* Fail safe: drop the actuation command and do not touch the invalid references *)
+    q_xCLS_DO := FALSE;
+    RETURN;
+END_IF
+
 (* This function block is different from the regular VRC in that CLOSING must be permitted. *)
 
 (* On first PLC pass, put valve into vented state, which implies a closed valve *)
@@ -164,30 +172,34 @@ iq_stValve.q_xCLS_DO:= q_xCLS_DO;
     </Action>
     <Action Name="ACT_PMPS" Id="{2d4909a8-c4a0-4b25-b483-8d410c71684c}">
       <Implementation>
-        <ST><![CDATA[bMoving := (iq_stValve.pv_xCLS_SW AND NOT iq_stValve.i_xClsLS) XOR (NOT iq_stValve.pv_xCLS_SW AND NOT i_xOpnLS);
-bDone := (NOT iq_stValve.pv_xCLS_SW AND iq_stValve.i_xOpnLS) XOR ( iq_stValve.pv_xCLS_SW AND i_xClsLS);
-If (i_xIsAperture ) OR NOT (iq_stValve.pv_xCLS_SW )THEN
-    bptm.i_stRequestedAssertion := PMPS_GVL.cstFullBeam;
-ELSE  bptm.i_stRequestedAssertion := PMPS_GVL.cst0RateBeam;
-END_IF
-bptm(fbArbiter:=fbArbiter,
-     i_TransitionAssertionID:=i_nTransitionRootID+2,
-     i_stTransitionAssertion:=PMPS_GVL.cst0RateBeam,
-     i_nRequestedAssertionID:=i_nTransitionRootID+ BOOL_TO_UDINT(NOT iq_stValve.pv_xCLS_SW),
-     i_stRequestedAssertion:=,
-     i_xMoving:=bMoving,
-     i_xDoneMoving:= bDone,
-     stCurrentBeamParameters:=PMPS_GVL.stCurrentBeamParameters,
-     i_sDeviceName:=i_sDevName,
-     q_xTransitionAuthorized=>);
-// Timeout
-tBPTMtimeout(IN:= bMoving AND NOT bptm.q_xTransitionAuthorized , PT:=T#1S);
-//xPMPS_OK := bptm.q_xTransitionAuthorized OR tBPTMtimeout.Q;
+        <ST><![CDATA[(* Validate the caller-supplied VAR_IN_OUT reference before any dereference,
+   no PMPS request is made with an unassigned arbiter reference *)
+IF __ISVALIDREF(fbArbiter) THEN
+    bMoving := (iq_stValve.pv_xCLS_SW AND NOT iq_stValve.i_xClsLS) XOR (NOT iq_stValve.pv_xCLS_SW AND NOT i_xOpnLS);
+    bDone := (NOT iq_stValve.pv_xCLS_SW AND iq_stValve.i_xOpnLS) XOR ( iq_stValve.pv_xCLS_SW AND i_xClsLS);
+    If (i_xIsAperture ) OR NOT (iq_stValve.pv_xCLS_SW )THEN
+        bptm.i_stRequestedAssertion := PMPS_GVL.cstFullBeam;
+    ELSE  bptm.i_stRequestedAssertion := PMPS_GVL.cst0RateBeam;
+    END_IF
+    bptm(fbArbiter:=fbArbiter,
+         i_TransitionAssertionID:=i_nTransitionRootID+2,
+         i_stTransitionAssertion:=PMPS_GVL.cst0RateBeam,
+         i_nRequestedAssertionID:=i_nTransitionRootID+ BOOL_TO_UDINT(NOT iq_stValve.pv_xCLS_SW),
+         i_stRequestedAssertion:=,
+         i_xMoving:=bMoving,
+         i_xDoneMoving:= bDone,
+         stCurrentBeamParameters:=PMPS_GVL.stCurrentBeamParameters,
+         i_sDeviceName:=i_sDevName,
+         q_xTransitionAuthorized=>);
+    // Timeout
+    tBPTMtimeout(IN:= bMoving AND NOT bptm.q_xTransitionAuthorized , PT:=T#1S);
+    //xPMPS_OK := bptm.q_xTransitionAuthorized OR tBPTMtimeout.Q;
 
-//Timeout and clear request
-IF (tBPTMtimeout.Q) THEN
-    fbArbiter.RemoveRequest(bptm.i_TransitionAssertionID);
-    fbArbiter.RemoveRequest(bptm.i_nRequestedAssertionID);
+    //Timeout and clear request
+    IF (tBPTMtimeout.Q) THEN
+        fbArbiter.RemoveRequest(bptm.i_TransitionAssertionID);
+        fbArbiter.RemoveRequest(bptm.i_nRequestedAssertionID);
+    END_IF
 END_IF]]></ST>
       </Implementation>
     </Action>
