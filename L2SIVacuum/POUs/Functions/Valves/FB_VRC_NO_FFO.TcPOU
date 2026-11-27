@@ -2,6 +2,10 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VRC_NO_FFO" Id="{c495bbea-0449-471b-ac8a-8e043f5385ad}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block is different from the regular VRC in that CLOSING must be permitted. *)
+(* History:
+   2026-11-27 (agent): the manual close override is now time-qualified, self-clearing and can no
+                       longer close the valve against the close interlock (audit finding #732).
+*)
 FUNCTION_BLOCK FB_VRC_NO_FFO EXTENDS FB_VRC_NO
 VAR_IN_OUT
     io_fbFFHWO    :    FB_HardwareFFOutput;
@@ -18,7 +22,7 @@ VAR_OUTPUT
 END_VAR
 VAR
 
-    xPMPS_OK:	BOOL	; (*PMPS interlock*)
+    xPMPS_OK:	BOOL	; (*PMPS interlock status, diagnostics only*)
     bMoving : BOOL;
     bDone :BOOL;
     tBPTMtimeout:TON;
@@ -28,6 +32,9 @@ VAR
         i_Desc := 'Fault occurs when the valve is not in safe state',
         i_TypeCode := 16#1010);
     xMPS_OK:	BOOL; (*MPS Fast OK, is set when the Valve is Open*)
+    xOvrdClsActive	:	BOOL; (*Qualified manual close override: TRUE while the override is honoured*)
+    tonOvrdMax	:	TON; (*Override lifetime timer, expires a qualified override*)
+    tOvrdMax	:	TIME := T#5m; (*Maximum time a qualified close override is honoured*)
 
 END_VAR]]></Declaration>
     <Implementation>
@@ -61,31 +68,59 @@ END_IF
 
 (*evaluate Valve CLose external interlock*)
 iq_stValve.xCLS_OK := i_xExtILK_OK;
-IF NOT iq_stValve.xCLS_OK and NOT tonOvrd.Q THEN
-    iq_stValve.pv_xCLS_SW := FALSE;
-END_IF
-
 
 (* Override logic *)
-(* Goal: give ability to override, but do so in a way that people won't forget it.
-Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+(* Goal: give the ability to close the valve while the close interlock is not satisfied, but do
+so in a way that people won't forget it and without overriding the interlock itself.
+Solution:
+- the manual override request (pv_xOvrdCls, PV FORCE_CLS) is honoured only after it, and the
+  global override mode, have been TRUE continuously for tOvrd (qualification), and only for as
+  long as the request is held;
+- while honoured it holds the close request through a lost interlock so the valve closes as soon
+  as the interlock permits. The interlock itself still gates the close output;
+- it is released when the override mode drops, once the close permission has been TRUE
+  continuously for tOvrd, or after tOvrdMax, so it can never stay on indefinitely
 *)
 
-tonDelOK(IN:=iq_stValve.xCLS_OK, PT:=T#10S);
-rtOK(CLK:=tonDelOK.Q);
+(* Qualify the manual close override request, it is honoured only while it is qualified *)
+tonOvrd(IN:= iq_stValve.pv_xOvrdCls AND i_xOverrideMode, PT:= tOvrd);
+xOvrdClsActive := tonOvrd.Q;
+
+(* Drop a stale request while the global override mode is off *)
+IF NOT i_xOverrideMode THEN
+    iq_stValve.pv_xOvrdCls := FALSE;
+END_IF
+
+(* A qualified override self-clears after tOvrdMax *)
+tonOvrdMax(IN:= xOvrdClsActive, PT:= tOvrdMax);
+IF tonOvrdMax.Q THEN
+    xOvrdClsActive := FALSE;
+    iq_stValve.pv_xOvrdCls := FALSE;
+    iq_stValve.pv_xCLS_SW := TRUE; //keep the close command the operator asked for
+    //Log
+    fbLogger(sMsg:='Close override expired', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+(* Release the override once the close permission has been TRUE for tOvrd consistently *)
+tonDelOK(IN:= iq_stValve.xCLS_OK, PT:= tOvrd);
+rtOK(CLK:= tonDelOK.Q);
 IF rtOK.Q AND iq_stValve.pv_xOvrdCls THEN
-    iq_stValve.pv_xOvrdCls :=FALSE;
-    if (iq_stValve.eState=CLOSED) AND (i_xOverrideMode) THEN iq_stValve.pv_xCLS_SW := TRUE; END_IF
+    xOvrdClsActive := FALSE;
+    iq_stValve.pv_xOvrdCls := FALSE;
+    iq_stValve.pv_xCLS_SW := TRUE; //hand the close request over to the regular close switch
     //Log
     fbLogger(sMsg:='Override expired', eSevr:=TcEventSeverity.Warning);
 END_IF
 
-//Override timer
-tonOvrd(IN:=iq_stValve.pv_xOvrdCls, PT:=tOvrd);
+(* Reset the close request when the interlock is not satisfied, unless a qualified override is
+   holding it *)
+IF NOT iq_stValve.xCLS_OK AND NOT xOvrdClsActive THEN
+    iq_stValve.pv_xCLS_SW := FALSE;
+END_IF
 
-(* Here's where the valve Actuates *)
-q_xCLS_DO := ((iq_stValve.xCLS_OK  AND iq_stValve.pv_xCLS_SW)OR (tonOvrd.Q AND i_xOverrideMode));
+(* Here's where the valve Actuates. The close interlock stays authoritative: an override can
+   retain the close request but never closes the valve against the interlock *)
+q_xCLS_DO := iq_stValve.xCLS_OK AND (iq_stValve.pv_xCLS_SW OR xOvrdClsActive);
 iq_stValve.q_xOPN_DO := NOT q_xCLS_DO;
 
 
@@ -122,16 +157,10 @@ IF NOT(i_xPMPS_OK) THEN
     ACT_PMPS();
 END_IF
 (*when interlock is lost the Valve closes regardless of the status of the PMPS and EPS*)
-xPMPS_OK := i_xPMPS_OK OR (bptm.q_xTransitionAuthorized OR tBPTMtimeout.Q);
-IF NOT (iq_stValve.xCLS_OK) THEN
-    iq_stValve.pv_xCLS_SW:= FALSE; // Reset switch after inlk is lost
-    iq_stValve.q_xCLS_DO := (iq_stValve.pv_xCLS_SW  AND iq_stValve.xCLS_OK) OR (tonOvrd.Q AND i_xOverrideMode);
-ELSIF xPMPS_OK THEN
-    iq_stValve.q_xCLS_DO := (iq_stValve.pv_xCLS_SW  AND iq_stValve.xCLS_OK) OR (tonOvrd.Q AND i_xOverrideMode);
-//ELSIF NOT (i_xPMPS_OK) THEN
-    // Only override mode
-    //iq_stValve.q_xOPN_DO := (tonOvrd.Q AND i_xOverrideMode);
-END_IF
+xPMPS_OK := i_xPMPS_OK OR (bptm.q_xTransitionAuthorized OR tBPTMtimeout.Q); //PMPS status, diagnostics only
+(* PMPS gates the beam transition request in ACT_PMPS only. The close request reset and the
+   close command are computed once per scan above ("Here's where the valve Actuates"), so they
+   are not re-assigned here *)
 
 (*MPS Fault setting*)
 If (i_xIsAperture ) THEN
