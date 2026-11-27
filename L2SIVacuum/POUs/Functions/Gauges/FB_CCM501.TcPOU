@@ -23,7 +23,7 @@ VAR
     rV : REAL;
     GaugeTurnOnTmr : TON;
     tStartupTimer:TON;
-    iTermBits: UINT := 30518 ; // The terminal's maximum value in bits
+    iTermBits: UINT := Constants.gc_uiAnalogTermFullScaleBits ; // The terminal's maximum value in bits
     (*IOs to be linked*)
     /// Controls and I/Os
     i_iPRESS_R AT %I* :INT; // input Pressure // Link to analog Input
@@ -62,7 +62,7 @@ tStartupTimer(PT:=T#3S);
 
 
 
-If (iTermBits=0) THEN iTermBits := 30518;END_IF
+If (iTermBits=0) THEN iTermBits := Constants.gc_uiAnalogTermFullScaleBits;END_IF
 rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
 
 (* Set Guage State based on the Analog voltage*)

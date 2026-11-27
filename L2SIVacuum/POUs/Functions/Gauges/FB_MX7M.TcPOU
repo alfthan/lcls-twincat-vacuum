@@ -21,7 +21,7 @@ VAR
     rV : REAL; //Calculated raw voltage from ADC on analog input
     rPress : REAL; //Calculated pressure
     tGaugeTurnOnTmr : TON;
-    iTermBits : UINT := 30518 ; //The terminal's maximum value in bits
+    iTermBits : UINT := Constants.gc_uiAnalogTermFullScaleBits ; //The terminal's maximum value in bits
 
     (*IOs to be linked*)
     //Controls and I/Os
@@ -50,7 +50,7 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(*Calculate raw voltage*)
-IF (iTermBits = 0) THEN iTermBits := 30518; END_IF
+IF (iTermBits = 0) THEN iTermBits := Constants.gc_uiAnalogTermFullScaleBits; END_IF
 rV := 10*INT_TO_REAL(i_iPRESS_R)/iTermBits;
 
 (*Calculate pressure*)

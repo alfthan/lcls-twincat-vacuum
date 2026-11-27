@@ -4,6 +4,11 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    (* Full-scale raw count of the analog input terminal used by the gauge FBs
+       (Beckhoff EL3174 at 10 V reads 30518 counts full scale).
+       Hardware dependent: change it here only; the gauge FBs reference this
+       constant for both their local default and their zero-value fallback. *)
+    gc_uiAnalogTermFullScaleBits : UINT := 30518;
 END_VAR
 ]]></Declaration>
   </GVL>

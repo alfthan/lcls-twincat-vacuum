@@ -37,7 +37,7 @@ VAR
 
     //rDefaultVAC_SP: REAL := 9E-3; // as per manual
 
-    iTermBits : UINT := 30518; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    iTermBits : UINT := Constants.gc_uiAnalogTermFullScaleBits; // The terminal's maximum value in bits default el3174 as per vacuum architecture
     binit : BOOL := TRUE;  // Do something at startup
 
     (*IOs to be linked*)
@@ -94,7 +94,7 @@ tHvDis_CH2(IN := IG_CH2.q_xHV_DIS, Q => IG_CH2.xTurnOnTime);
 
 (*Raw voltage conversion*)
 //check no div by zero
-IF (iTermBits = 0) THEN iTermBits := 30518; END_IF
+IF (iTermBits = 0) THEN iTermBits := Constants.gc_uiAnalogTermFullScaleBits; END_IF
 rV_CH1 := 10*INT_TO_REAL(i_iPRESS_R_CH1)/iTermBits;
 rV_CH2 := 10*INT_TO_REAL(i_iPRESS_R_CH2)/iTermBits;
 

@@ -26,7 +26,7 @@ VAR
     timer:TON;
     (*Default set point 50 mT*)
     rDefaultVAC_SP: REAL := 9E-3; // as per manual
-    iTermBits: UINT := 30518 ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    iTermBits: UINT := Constants.gc_uiAnalogTermFullScaleBits ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
     q_xHV_DIS AT %Q* : BOOL := TRUE; // Active Low
@@ -43,7 +43,7 @@ IF PG.rVAC_SP = 0 THEN
     PG.rVAC_SP := rDefaultVAC_SP;
 END_IF
 // check no div by zero
-If (iTermBits=0) THEN iTermBits := 30518;END_IF
+If (iTermBits=0) THEN iTermBits := Constants.gc_uiAnalogTermFullScaleBits;END_IF
 rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/iTermBits;
 
 (* Pressure OK check *)
