@@ -4,6 +4,21 @@
     <Declaration><![CDATA[(* This function is for the Pirani MKS 317 connected to a 937A/B *)
 (* This function block is used to provide protection and automatic turn on of ion gauges,
  it also manages the turn on of the AT_VAC boolean, and checks to make sure the pressure is good *)
+(* Usage: link i_iPRESS_R to the 0..10 V analog input that carries the Pirani gauge pressure output and
+   read pressure, state and setpoint flags from the PG interface struct. *)
+(* Objectives: convert the raw terminal counts into a terminal voltage, apply the 937A or 937B
+   logarithmic transfer function selected by b937A and classify the reading into the MKS 317 validity
+   window before maintaining xPRESS_OK and xAT_VAC. *)
+(* The analog full-scale count and voltage span (iFullScaleCount, rFullScaleVoltage) and the transfer
+   function constants (rCurveDecadeBase, rCurveVoltsPerDecade, rCurveOffset937A, rCurveOffset937B) are
+   declared once in VAR CONSTANT and referenced by name only, so a different analog card resolution, a
+   re-ranged transmitter or a corrected vendor curve is a one-line edit and the two controller branches
+   cannot drift apart. *)
+(* History:
+     2016-05-20 - Alex Wallace and Scott Stubbs: 937B logarithmic output conversion
+     2018-09-28 - Margaret Ghaly
+     2026-11-27 - the conversion literals (32767 counts, 10 V span, 0.6 V/decade, 12 V and 7.2 V
+                  offsets) were replaced with the named constants in VAR CONSTANT. *)
 
 FUNCTION_BLOCK FB_MKS317 Extends FB_GaugeBase
 VAR_IN_OUT
@@ -25,6 +40,18 @@ VAR
 END_VAR
 
 VAR CONSTANT
+    (* Analog input scaling: the 937A/B pressure output is a 0..10 V logarithmic signal read on a
+       +/-10 V terminal, so full scale is iFullScaleCount counts at rFullScaleVoltage volts *)
+    iFullScaleCount: INT := 32767; // raw analog input counts at the full-scale terminal voltage
+    rFullScaleVoltage: REAL := 10.0; // terminal voltage [V] that iFullScaleCount corresponds to
+
+    (* Controller transfer function, P = rCurveDecadeBase ^ (rV / rCurveVoltsPerDecade - offset) *)
+    rCurveDecadeBase: REAL := 10.0; // base of the logarithmic pressure curve
+    rCurveVoltsPerDecade: REAL := 0.6; // curve slope [V/decade], shared by the 937A and 937B branches
+    rCurveOffset937A: REAL := 12.0; // 937A curve offset [V], manual page 61
+    rCurveOffset937B: REAL := 7.2; // 937B curve offset [V], manual page 73
+
+    (* Gauge validity boundaries, from the terminal voltage *)
     rMinPressure: REAL := 1E-4;
     rDefaultVAC_SP: REAL :=5E-2; // Default 50 mT
     rDisconnectedBoundary	:	REAL := 0.10;
@@ -40,12 +67,14 @@ END_VAR
 (* 5-20-2016, Alex Wallace and Scott Stubbs *)
 (* 09-28-2018, Margaret Ghaly *)
 (* This function will read the pressure from any gauge on a 937B. *)
+(* All hardware scaling and transfer function constants are named in VAR CONSTANT *)
 
-rV := 10*INT_TO_REAL(PG.i_iPRESS_R)/32767;
+(* Terminal voltage [V] from the raw analog input counts *)
+rV := rFullScaleVoltage*INT_TO_REAL(PG.i_iPRESS_R)/INT_TO_REAL(iFullScaleCount);
 if (b937A) THEN
-    PG.rPRESS := LREAL_TO_REAL(EXPT(10,((rV)/0.6)-12)); //manual page 61 MKS937A
+    PG.rPRESS := LREAL_TO_REAL(EXPT(rCurveDecadeBase,((rV)/rCurveVoltsPerDecade)-rCurveOffset937A)); //manual page 61 MKS937A
     ELSE
-    PG.rPRESS := LREAL_TO_REAL(EXPT(10,(rV-7.2)/0.6));	//manual page 73 MKS937B
+    PG.rPRESS := LREAL_TO_REAL(EXPT(rCurveDecadeBase,(rV-rCurveOffset937B)/rCurveVoltsPerDecade)); //manual page 73 MKS937B
 END_IF
 
 
