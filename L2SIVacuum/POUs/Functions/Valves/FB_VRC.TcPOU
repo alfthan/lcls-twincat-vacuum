@@ -15,8 +15,21 @@ VAR_INPUT
     i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
 END_VAR
 VAR_OUTPUT
+    (* Valve control/status interface published to EPICS.
+       The pv name is deliberately left empty: pytmc builds the record
+       prefix from the FB instance's own pragma (e.g. 'pv: XCS:RCC:VRC:01'
+       on the instance in GVL_RCC) and the record name from the pv of the
+       matching ST_VRC / ST_ValveBase member (OPN_SW, ALM_RST, FORCE_OPN,
+       OVRD_ON, OPN_DI, CLS_DI, OPN_DO, EXT_ILK_OK, OPN_OK, POS_STATE,
+       STATE, ERROR, ErrMsg, LOGGER, CLS_OK). Each of those members declares
+       the io direction of its own PV; the io: io declared here is the
+       direction of this interface as a whole, which carries both EPICS
+       commands and readbacks, and it only applies to a member that
+       declares no io of its own. Naming this container would insert an
+       extra path segment and rename every published valve PV. *)
     {attribute 'pytmc' := '
     pv:
+    io: io;
     '}
     iq_stValve : ST_VRC;
 END_VAR
