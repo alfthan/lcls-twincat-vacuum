@@ -26,10 +26,36 @@ q_xMPStart	:	BOOL; //Main Pump start
     io: i;
     '}
 q_xBPStart	:	BOOL; // Booster Pump start (this can be started by the pump automatically)
+{attribute 'pytmc' := '
+    pv: RST_SW;
+    field: ZNAM FALSE;
+    field: ONAM TRUE;
+    io: io;
+    '}
+xResetSW	:	BOOL; //Acknowledge of the latched start-timeout fault, cleared again by the block
 
 xBPIlk	:	BOOL;	//Booster pump interlock
 rBPIlkSP	:	REAL := 30; //Booster pump pressure setpoint
 tonBP	:	TON := (PT:=T#5S); //Timer for pressure and valve stability
+
+//Main pump start timeout supervision
+{attribute 'pytmc' := '
+    pv: MP_START_TMO;
+    field: ZNAM FALSE;
+    field: ONAM TRUE;
+    io: i;
+    '}
+xMPStartTimeout	:	BOOL; //Latched: main pump did not report running within the start timeout
+{attribute 'pytmc' := '
+    pv: MP_START_TMO_CNT;
+    io: i;
+    '}
+nMPStartTimeoutCount	:	UDINT; //Number of main pump start timeouts counted over the life of the block
+{attribute 'pytmc' := '
+    pv: ErrorMessage;
+    io: i;
+    '}
+sError	:	STRING; //Explicit message of the latched fault, empty while no fault is latched
 
 
 //Readbacks

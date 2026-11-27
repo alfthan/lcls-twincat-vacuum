@@ -1,13 +1,37 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_EbaraDryPump" Id="{fa5a85fd-eab5-4a2b-a440-c1a901955592}" SpecialFunc="None">
-    <Declaration><![CDATA[(*This function block does basic controls for the Ebara EV-S Dry pump. Starts booster pump when appropriate. Turns off pump
-in the event of errors/ warnings. Provides interlocking interface.*)
+    <Declaration><![CDATA[(*
+    Purpose:
+        Basic controls for the Ebara EV-S dry pump (EV-S20/50/100/200). Starts the
+        booster pump when appropriate, turns the pump off on errors/warnings and
+        provides the interlocking interface.
+
+    Usage:
+        Call once per scan with the external interlock permit and the booster pump
+        gauge. Command the main pump through stPump.pv_xRunSW and acknowledge a
+        latched start timeout through stPump.xResetSW. Every start command is
+        bounded by i_tMPStartTimeout: a pump that never reports running latches
+        stPump.xMPStartTimeout, records an explicit stPump.sError message and
+        drops the start output instead of waiting in pumpSTARTING indefinitely.
+
+    Objectives:
+        - Bound the main pump start wait and report an expiry as a failed start.
+        - Keep the reported fault latched until the operator acknowledges it.
+
+    History:
+        2016-04-29 A. Wallace - original block (EV-S dry pump controls).
+        2026-11-27 Scirix agent (task #121) - bound the wait for i_xMPStatus with
+                    i_tMPStartTimeout and latch an explicit start-timeout fault,
+                    cleared only through stPump.xResetSW; the block previously
+                    stayed in pumpSTARTING indefinitely.
+*)
 FUNCTION_BLOCK FB_EbaraDryPump EXTENDS FB_Pump
 VAR_INPUT
     i_stBPGauge	:	ST_VG; //booster pump interlock gauge
     i_xVlvOpn	:	BOOL; //valve(s) to main system load are open
-    i_xExtIlkOK	:	BOOL;
+    i_xExtIlkOK	:	BOOL; //external interlock permit, TRUE when the pump may run
+    i_tMPStartTimeout : TIME := T#60S; //Max time for the main pump to report running after the start command
 
 END_VAR
 VAR_OUTPUT
@@ -29,6 +53,10 @@ VAR
     i_xWarning	AT%I*:	BOOL; //Warning status
     i_xAlarmOK	AT%I*:	BOOL; //Alarm, maps to error
     i_xRemote	AT%I*:	BOOL; //Remote control status
+    (*Main pump start supervision*)
+    tonMPStart : TON; //Runs while the main pump is commanded to start but has not reported running
+    rtReset : R_TRIG; //Rising edge of the start-timeout acknowledge
+    rtMPStartTimeout : R_TRIG; //Rising edge of the latched start-timeout fault, used for logging
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -52,6 +80,11 @@ The booster pump can either be started automatically by the pump itself (probabl
 or it can be started by the PLC. The pressure setpoint is by default 30T. It may be wise to make
 sure the pump was exposed to the full system load before starting the booster.
 
+Main Pump Start Supervision:
+The main pump start command is bounded by i_tMPStartTimeout. If the pump does not report
+running (i_xMPStatus) within that time, the start is counted as a failed command, the
+start output is dropped and a latched fault is reported until stPump.xResetSW is pulsed.
+
 *)
 
 //Mapping
@@ -61,11 +94,36 @@ stPump.xExtIlk := NOT i_xExtIlkOK;
 //Interlock and error/warning
 stPump.xIlkOK :=  NOT stPump.xExtIlk AND NOT (stpump.xErr);// OR stpump.xWrn);
 
+//Main pump start timeout acknowledge: the latched fault is cleared only by a rising
+//edge of the reset switch, and only while the main pump is not commanded to start.
+//Dropping the run switch on its own never dismisses the fault.
+rtReset(CLK:= stPump.xResetSW);
+IF stPump.xResetSW THEN
+    stPump.xResetSW := FALSE; //self-clearing soft reset
+END_IF
+IF rtReset.Q AND stPump.xMPStartTimeout AND NOT stPump.pv_xRunSW THEN
+    stPump.xMPStartTimeout := FALSE;
+    stPump.sError := '';
+END_IF
+
 //Start/ Stop the pump
-IF stpump.xIlkOK THEN
+IF stpump.xIlkOK AND NOT stpump.xMPStartTimeout THEN
     stpump.q_xMPStart := stpump.pv_xRunSW;
 ELSE
+    //No interlock, or a latched start timeout: de-energize the start output and drop
+    //the run switch, so a start that already failed is not retried until acknowledged.
     stpump.q_xMPStart := stpump.pv_xRunSW := FALSE;
+END_IF
+
+//Main pump start supervision: the start output drives a mechanism, so the wait for
+//the pump to report running is bounded. The timer runs while the pump is commanded
+//to start but has not reported running; on expiry the start is counted as failed and
+//an explicit fault is latched instead of staying in pumpSTARTING indefinitely.
+tonMPStart(IN:= stpump.q_xMPStart AND NOT stpump.i_xMPStatus, PT:= i_tMPStartTimeout);
+IF tonMPStart.Q AND NOT stpump.xMPStartTimeout THEN
+    stpump.xMPStartTimeout := TRUE;
+    stpump.nMPStartTimeoutCount := stpump.nMPStartTimeoutCount + 1;
+    stpump.sError := 'Main pump start timeout: pump did not report running.';
 END_IF
 
 //Booster pump
@@ -74,7 +132,8 @@ stpump.tonBP(IN:=stpump.xBPIlk);
 stpump.q_xBPStart := stpump.tonBP.Q;
 
 (*State evaluation*)
-IF stPump.i_xAlarm THEN
+//A latched start timeout is a pump fault, so it is reported through eState as well
+IF stPump.i_xAlarm OR stpump.xMPStartTimeout THEN
     stpump.eState := pumpFAULT;
 ELSIF NOT stpump.q_xMPStart AND stPump.i_xAlarm THEN
         stpump.eState := pumpSTOPPED;
@@ -142,6 +201,10 @@ IF tAction.Q THEN fbLogger(sMsg:='Pump commanded to start', eSevr:=TcEventSeveri
 // Log FAULT
 tFault(CLK:= NOT stPump.i_xAlarm);
 IF tFault.Q THEN fbLogger(sMsg:='Pump Lost Alarm OK bit', eSevr:=TcEventSeverity.Critical); END_IF
+
+// Log START TIMEOUT
+rtMPStartTimeout(CLK:= stPump.xMPStartTimeout);
+IF rtMPStartTimeout.Q THEN fbLogger(sMsg:= stPump.sError, eSevr:=TcEventSeverity.Critical); END_IF
 
 ]]></ST>
       </Implementation>
