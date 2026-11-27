@@ -8,7 +8,6 @@ VAR_OUTPUT
 END_VAR
 VAR
     VRC: FB_VRC;
-    ex               : __SYSTEM.ExceptionCode;
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -30,20 +29,14 @@ VAR//_INPUT
 
 
     Interlock_OK :BOOL := TRUE;
-
-    ex: INT;
 END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[TEST('VRC_Startup');
-//__TRY
-VRC(i_xExtILK_OK:= Interlock_OK, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= Interlock_OK, i_xOverrideMode:= FALSE, iq_stValve=>);
 AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC q_xOPN_DO is set to true');
 AssertFalse(VRC.iq_stValve.pv_xOPN_SW,'VRC pv_xOPN_SW is set to true');
-//__CATCH(ex)
-//__FINALLY
 TEST_FINISHED_NAMED('VRC_Startup');
-//__ENDTRY
 
 ]]></ST>
       </Implementation>
@@ -60,20 +53,20 @@ END_VAR
       <Implementation>
         <ST><![CDATA[TEST('VRC_Interlock_Active');
 VRC.M_Set_OPN_SW (TRUE);
-VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= FALSE, iq_stValve=>);
 AssertFalse(VRC.iq_stValve.pv_xOPN_SW,'VRC open_SW is set to true');
 AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC open DO is set to true');
 TEST_FINISHED_NAMED('VRC_Interlock_Active');
 
 TEST('VRC_Interlock_OK');
 VRC.M_Set_OPN_SW (TRUE);
-VRC(i_xExtILK_OK:= TRUE, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= TRUE, i_xOverrideMode:= FALSE, iq_stValve=>);
 AssertTrue(VRC.iq_stValve.pv_xOPN_SW,'VRC open_SW is set to FALSE');
 AssertTrue(VRC.iq_stValve.q_xOPN_DO,'VRC open DO is set to FALSE');
 TEST_FINISHED_NAMED('VRC_Interlock_OK');
 
 TEST('VRC_Interlock_Lost');
-VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= , iq_stValve=> );
+VRC(i_xExtILK_OK:= FALSE, i_xOverrideMode:= FALSE, iq_stValve=>);
 AssertFalse(VRC.iq_stValve.pv_xOPN_SW,'VRC open_SW is set to true');
 AssertFalse(VRC.iq_stValve.q_xOPN_DO,'VRC open DO is set to true');
 TEST_FINISHED_NAMED('VRC_Interlock_Lost');
