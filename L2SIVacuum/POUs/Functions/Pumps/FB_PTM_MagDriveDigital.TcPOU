@@ -2,7 +2,13 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_MagDriveDigital" Id="{50197c8d-2497-4812-a680-acd70b819f81}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Leybold connected to the MagDriveDigital Controller.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+ A start/run watchdog (tRunWatchdog) bounds the run command: if the controller never reports at-speed
+ (pump stuck in STARTING) or loses at-speed while running for longer than tRunWatchdogTime, the block
+ latches xRunFaultLock, drops the run command, forces eState := pumpFAULT and logs a critical event.
+ The latched fault clears only through the dedicated iq_stPtm.xResetSW input.
+ History: A. Wallace, 2015-7-15 - initial version.
+          2026-11-27 - added start/run watchdog fault (audit finding #1216).*)
 FUNCTION_BLOCK FB_PTM_MagDriveDigital EXTENDS FB_Pump
 VAR_IN_OUT
 
@@ -18,8 +24,14 @@ VAR_OUTPUT
     iq_stPtm	:	ST_LeyboldPTM;
 END_VAR
 VAR
-    xRunOk	:	BOOL;
-    tofRemoteDelay	:	TOF;
+    xRunOk	:	BOOL;                       // TRUE when the external interlock is OK, the controller reports no fault and no fault is latched
+    tofRemoteDelay	:	TOF;            // Off-delay that keeps the remote-enable output TRUE after the run command drops
+
+    (* Start/run watchdog *)
+    tRunWatchdog	:	TON;                            // Times how long the pump may be commanded to run without reporting at-speed
+    tRunWatchdogTime	:	TIME := T#10M;          // Start/run watchdog preset; tune per pump with M_SetRunWatchdogTime
+    xRunFaultLock	:	BOOL;                           // Latched TRUE when the watchdog expires; cleared only by iq_stPtm.xResetSW
+    tRunFaultEdge	:	R_TRIG;                         // Rising edge of the latched watchdog fault, used to log it once
 
 
     (*IO*)
@@ -41,9 +53,24 @@ tofRemoteDelay(IN:=iq_stPtm.q_RunDO, PT:=T#5S);
 
 iq_stPtm.q_xRemote := tofRemoteDelay.Q;
 
+(* Fault acknowledge: the latched start/run watchdog fault clears only through the dedicated reset input *)
+IF iq_stPtm.xResetSW THEN
+    iq_stPtm.xResetSW := FALSE;
+    xRunFaultLock := FALSE;
+END_IF
+
+(* Start/run watchdog: a run command that never reaches at-speed (stuck in STARTING) or that loses
+   at-speed while running is a failed start and must not wait forever. On expiry latch an explicit fault. *)
+tRunWatchdog(IN:= (iq_stPtm.q_RunDO AND NOT iq_stPtm.i_xAtSpd), PT:= tRunWatchdogTime);
+IF tRunWatchdog.Q THEN
+    xRunFaultLock := TRUE;
+END_IF
+
+iq_stPtm.xRunTimeout := xRunFaultLock;
+
 (* Interlock Sum *)
 iq_stPtm.xExtRunOk:= i_xExtILKOk;
-xRunOk := iq_stPtm.xExtRunOk AND NOT iq_stPtm.i_xFault;
+xRunOk := iq_stPtm.xExtRunOk AND NOT iq_stPtm.i_xFault AND NOT xRunFaultLock;
 
 (* Basic pump supervisory section *)
 IF xRunOk THEN
@@ -54,7 +81,7 @@ ELSE
 END_IF
 
 (*Pump STATE*)
-IF iq_stPtm.i_xFault THEN
+IF iq_stPtm.i_xFault OR xRunFaultLock THEN
     iq_stPtm.eState := pumpFAULT;
 ELSIF iq_stPTM.i_xDecel AND NOT iq_stPtm.q_RunDO THEN
     iq_stPtm.eState := pumpSTOPPING;
@@ -127,6 +154,10 @@ IF tAction.Q THEN fbLogger(sMsg:='Pump commanded to start', eSevr:=TcEventSeveri
 tFault(CLK:= NOT iq_stPTM.i_xFault);
 IF tFault.Q THEN fbLogger(sMsg:='Pump Lost Alarm OK bit', eSevr:=TcEventSeverity.Critical); END_IF
 
+// Log start/run watchdog trip
+tRunFaultEdge(CLK:= xRunFaultLock);
+IF tRunFaultEdge.Q THEN fbLogger(sMsg:='Pump run watchdog expired: no AT_SPD feedback within start/run watchdog time.', eSevr:=TcEventSeverity.Critical); END_IF
+
 ]]></ST>
       </Implementation>
     </Action>
@@ -161,6 +192,17 @@ END_VAR
       <Implementation>
         <ST><![CDATA[
 this^.iq_stPtm.xRunSW := run;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_SetRunWatchdogTime" Id="{da48ea13-3096-4ae9-8471-d46e24b5fde7}">
+      <Declaration><![CDATA[METHOD PUBLIC M_SetRunWatchdogTime : BOOL
+VAR_INPUT
+    tWatchdogTime : TIME; // Maximum allowed time from the run command to the AT_SPD feedback
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[This^.tRunWatchdogTime := tWatchdogTime;
+M_SetRunWatchdogTime := TRUE;]]></ST>
       </Implementation>
     </Method>
   </POU>

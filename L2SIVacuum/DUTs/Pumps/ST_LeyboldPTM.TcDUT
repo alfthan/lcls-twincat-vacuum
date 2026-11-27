@@ -41,6 +41,15 @@ More?
     '}
     q_xRemote :BOOL;
     i_xRemote : BOOL; (* Remote control enabled *)
+
+//Alarms
+    {attribute 'pytmc' := '
+    pv: RUN_TMOUT;
+    field: ZNAM FALSE;
+    field: ONAM TRUE;
+    io: i;
+    '}
+    xRunTimeout : BOOL; (* Latched TRUE when the pump is commanded to run but AT_SPD feedback is absent beyond the start/run watchdog time *)
 END_STRUCT
 END_TYPE
 ]]></Declaration>
