@@ -2,25 +2,68 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_OERLIKON_TD400_COM" Id="{c8ae72ef-e9c8-4596-8d8c-fcd5712999eb}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK FB_OERLIKON_TD400_COM
+(*
+    Purpose:
+        Serial interface to an Oerlikon Leybold TD400 turbo pump controller. The
+        block is called every scan from the serial PTM IO, polls the pump through
+        FB_TD400SerialDriver and maps the reply into stTD400Status.
+
+    Usage:
+        Pass the serial RX/TX buffers and the ST_TD400Control setpoints through the
+        VAR_IN_OUT interface. Every poll is bounded by tTimeOut. A poll that fails,
+        or that gets no reply within tTimeOut, latches q_xError (with q_xTimeout set
+        for the timeout case) together with an explicit message in q_sResult, so the
+        outcome is reported to the caller instead of being silently reset.
+
+    Objectives:
+        - Bound every poll by tTimeOut and report an expiry as a failed poll.
+        - Keep the reported fault latched until the caller acknowledges it.
+
+    History:
+        2026-11-27 Scirix agent (task #114) - latch q_xError/q_xTimeout with an
+                    explicit q_sResult message on a driver error or poll timeout;
+                    the block previously only reset the driver and reported nothing.
+*)
 VAR_INPUT
+    /// rising edge acknowledge: clears the latched q_xError/q_xTimeout
+    i_xAcknowledge : BOOL;
 END_VAR
 VAR
+    /// Maximum wait time for a reply from the pump, propagated to the serial driver
     tTimeOut : TIME := TIME#1S0MS;
+    /// Serial driver that performs the TD400 transactions
     fbTD400SerialDriver : FB_TD400SerialDriver;
+    /// Rising edge of the acknowledge input
+    rtAcknowledge : R_TRIG;
+    /// Message prefix of the latched fault when the pump did not answer within tTimeOut
+    sTimeoutMesg : STRING(255) := 'TD400 poll timeout: pump did not reply within tTimeOut. ';
+    /// Message prefix of the latched fault for any other driver failure
+    sErrorMesg : STRING(255) := 'TD400 poll failed: ';
 END_VAR
 VAR_IN_OUT
+    /// Serial receive buffer of the RS-232/RS-485 port
     SerialRXBuffer : ComBuffer;
+    /// Serial transmit buffer of the RS-232/RS-485 port
     SerialTXBuffer : ComBuffer;
+    /// Speed setpoint (frequency in Hz) requested by the pump function block
     stTD400Control : ST_TD400Control;
 END_VAR
 VAR_OUTPUT
+    /// Registers read back from the TD400
     stTD400Status : ST_TD400Status;
+    /// Latched fault: set by a driver error or a poll timeout, cleared only by i_xAcknowledge
+    q_xError : BOOL;
+    /// The latched fault is the timeout case: the pump did not reply within tTimeOut
+    q_xTimeout : BOOL;
+    /// Explicit message of the latched fault, empty while no fault is latched
+    q_sResult : STRING(255);
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This program is called from Serial PTM IO *)
 
-(* scan the pumps one at a time *)//MG???
+(* Poll the pump: the driver is re-triggered every scan, so a failed poll is
+   retried after its fault has been reported. *)
 fbTD400SerialDriver(
     i_xExecute:= TRUE,
     i_tTimeOut:= tTimeOut,
@@ -28,17 +71,47 @@ fbTD400SerialDriver(
     iq_stControl:= stTD400Control,
     iq_stSerialRXBuffer:= SerialRXBuffer,
     iq_stSerialTXBuffer:= SerialTXBuffer,
-    q_xDone=> ,
-    q_xError=> ,
-    q_xTimeout=> ,
-    q_sResult=> ,
     q_stStatus=> stTD400Status);
+
+(* Report the poll outcome to the caller (conv_158f59a2176f). A driver error or a
+   poll timeout -- the driver reports q_xTimeout when the pump did not answer within
+   tTimeOut -- latches q_xError with an explicit message instead of only resetting
+   the driver, so the timeout outcome is never silently dropped. q_xTimeout marks
+   the particular timeout case. The first failure is latched; later failures leave
+   the latched message untouched until it is acknowledged. *)
+IF NOT q_xError THEN
+    IF fbTD400SerialDriver.q_xTimeout THEN
+        q_xError := TRUE;
+        q_xTimeout := TRUE;
+        q_sResult := CONCAT(sTimeoutMesg, fbTD400SerialDriver.q_sResult);
+    ELSIF fbTD400SerialDriver.q_xError THEN
+        q_xError := TRUE;
+        q_xTimeout := FALSE;
+        q_sResult := CONCAT(sErrorMesg, fbTD400SerialDriver.q_sResult);
+    END_IF
+END_IF
 
 IF fbTD400SerialDriver.q_xDone
     OR fbTD400SerialDriver.q_xError
     OR fbTD400SerialDriver.q_xTimeout THEN
         (* reset for next time *)
-        fbTD400SerialDriver(i_xExecute:= FALSE, iq_stSerialRXBuffer:= SerialRXBuffer, iq_stSerialTXBuffer:= SerialTXBuffer, iq_stControl:= stTD400Control);
+        fbTD400SerialDriver(
+            i_xExecute:= FALSE,
+            iq_stSerialRXBuffer:= SerialRXBuffer,
+            iq_stSerialTXBuffer:= SerialTXBuffer,
+            iq_stControl:= stTD400Control);
+END_IF
+
+(* Acknowledge: clears the latched fault, and only while the driver reports no
+   failure (a known-good state). If the pump is still failing, the next poll
+   latches the fault again. *)
+rtAcknowledge(CLK:= i_xAcknowledge);
+IF rtAcknowledge.Q
+    AND NOT fbTD400SerialDriver.q_xError
+    AND NOT fbTD400SerialDriver.q_xTimeout THEN
+        q_xError := FALSE;
+        q_xTimeout := FALSE;
+        q_sResult := '';
 END_IF
 ]]></ST>
     </Implementation>
