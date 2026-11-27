@@ -2,7 +2,13 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_KashiyamaPump_G" Id="{0b0502f2-0c6b-40fa-943b-64b4a6556c70}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Kashiyama pump. Turns off pump
-in the event of errors/ warnings. Provides interlocking interface.*)
+in the event of errors/ warnings. Provides interlocking interface.
+
+ Fail-safe convention: the pump alarm output is read as a normally closed (NC) alarm-OK
+ signal, i.e. TRUE means no alarm. Kashiyama dry pumps drive the alarm output high while the
+ pump is healthy, so a FALSE reading - real alarm, unpowered pump or broken wiring - faults
+ the pump, blocks the run permissive and is never taken for a healthy alarm signal.
+*)
 FUNCTION_BLOCK FB_KashiyamaPump_G
 VAR_IN_OUT
 
@@ -25,14 +31,17 @@ VAR
     q_xRemote 	AT%Q*:  BOOL;
 
 (* Input *)
-    i_xAlarm	AT%I*:	BOOL;
+    // Fail-safe (normally closed) alarm contact: TRUE = no alarm (pump healthy).
+    // FALSE = alarm, unpowered pump or broken wiring, i.e. a lost signal is reported as an alarm.
+    i_xAlarmOK	AT%I*:	BOOL;
     i_xIsRun	AT%I*:	BOOL;
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[q_stPump.q_xRemoteDo := q_stPump.xRemoteSW;
 
-//Only run when commanded to be in remote
+//Only run when commanded to be in remote; the alarm-OK bit is fail-safe, so a FALSE
+//(alarm, unpowered pump or broken wiring) withholds the run permissive
 q_stPump.xIlkOK := q_stPump.q_xRemoteDO AND q_stPump.i_xAlarmOK;
 
 IF q_stPump.xIlkOK THEN
@@ -84,7 +93,7 @@ VAR_INPUT
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[M_alarm := THIS^.q_stPump.i_xAlarmOK;   // 0 = no alarm | 1 = alarm ]]></ST>
+        <ST><![CDATA[M_Alarm := NOT THIS^.q_stPump.i_xAlarmOK; // 0 = no alarm | 1 = alarm (the NC contact reads TRUE only while healthy)]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_AlarmOK" Id="{75954e5e-5181-49f6-89ef-e9f50c9ed770}">
@@ -93,7 +102,7 @@ VAR_INPUT
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[M_AlarmOK := THIS^.q_stPump.i_xAlarmOK;]]></ST>
+        <ST><![CDATA[M_AlarmOK := THIS^.q_stPump.i_xAlarmOK; // TRUE = no alarm; FALSE = alarm or lost/unpowered signal]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_IO" Id="{cc5a91ec-d268-412f-a580-fe0b22b2f643}">
@@ -108,7 +117,7 @@ END_VAR
     q_xLspdDo := THIS^.q_stPump.q_xLspdDo;
     q_xRemote := THIS^.q_stPump.q_xRemoteDo;
 (* Input *)
-    THIS^.q_stPump.i_xAlarmOK :=	THIS^.i_xAlarm;
+    THIS^.q_stPump.i_xAlarmOK :=	THIS^.i_xAlarmOK; // Fail-safe NC contact, kept in alarm-OK polarity
     THIS^.q_stPump.i_xIsRun :=	THIS^.i_xIsRun;]]></ST>
       </Implementation>
     </Method>

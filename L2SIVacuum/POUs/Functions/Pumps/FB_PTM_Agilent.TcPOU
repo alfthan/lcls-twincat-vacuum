@@ -2,13 +2,23 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_Agilent" Id="{30958a8b-73eb-4ef7-96d3-72fcd80f684d}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Agilent TV Turbo pump. Turns off pump
-in the event of errors/ warnings. Provides interlocking interface.*)
+in the event of errors/ warnings. Provides interlocking interface.
+
+ Fail-safe convention: the controller FAULT output is read as a normally closed (NC) alarm-OK
+ signal, i.e. TRUE means the controller reports no fault. A FALSE reading - real fault, alarm,
+ unpowered controller, broken wiring or otherwise lost signal - faults the pump, drops the run
+ output and holds the state machine in pumpFAULT, so a missing fault signal is never taken for
+ a healthy one.
+*)
 FUNCTION_BLOCK FB_PTM_Agilent EXTENDS FB_Pump
 VAR_IN_OUT
 
 END_VAR
 VAR_INPUT
-    i_xExtILKOk : BOOL; // Connect to external interlock logic(e.g TURBO_ILK Function), TRUE if not used.
+    // External interlock permit: TRUE = interlocks satisfied (wire to the pump interlock function,
+    // e.g. F_TurboExtILKLogic). Fail-safe: defaults to FALSE, so unwired or lost interlock logic
+    // withholds xExtRunOk and keeps the pump from starting.
+    i_xExtILKOk : BOOL;
     i_stGauge	:	ST_VG; //Pirani backing gauge for pump interlock
     i_rMaxBackingPressure : REAL;
 END_VAR
@@ -48,7 +58,9 @@ VAR
     i_iPowerMon AT%I*: INT;
     i_iCurrentMon AT%I*: INT;
     i_iRawSpeed AT %I* : INT;
-    i_xFault AT%I*	:	BOOL;
+    // Fail-safe (normally closed) controller FAULT contact: TRUE = controller healthy (no fault).
+    // FALSE = fault, alarm, unpowered controller or broken wiring, i.e. a lost signal faults the pump.
+    i_xAlarmOK AT%I*	:	BOOL;
     q_RunDO AT%Q*	:	BOOL;
     q_xLSpd	AT%Q*	:  BOOL;
 
@@ -165,7 +177,8 @@ CASE (step) OF
 END_CASE
 
 (* Interrupts *)
-(* FAULT signal*)
+(* FAULT signal: single fail-safe polarity - i_xFault is TRUE for a controller fault, an alarm
+   or a lost/unpowered alarm-OK contact (see the boundary inversion in IO) *)
 IF (iq_stPtm.i_xFault) AND (step < 90 ) THEN
     iq_stPtm.eState := pumpFAULT; // no need taken care of in the state
     iq_stPtm.xPumpFaultLock := TRUE;
@@ -183,7 +196,7 @@ END_IF
 (*Check backing gauge pressure*)
 //xBackingPressureOK := i_stGauge.xPRESS_OK AND ( i_stGauge.rPRESS < iq_stPtm.rBackingPressureSP);
 
-(* Interlock Sum *)
+(* Interlock Sum: xExtRunOk is TRUE only while the permit is granted and there is no fault *)
 iq_stPtm.xExtRunOk := i_xExtILKOk AND NOT iq_stPtm.i_xFault AND NOT iq_stPtm.xPumpFaultLock AND NOT(tILK.Q);
 
 IF NOT iq_stPtm.xExtRunOk AND (NOT (step >= 90)) THEN
@@ -334,7 +347,8 @@ iq_stPtm.i_xSTART:=	i_xSTART;
 iq_stPtm.i_xR1:=	i_xR1;
 iq_stPtm.i_xR2:=	i_xR2;
 iq_stPtm.i_xLSpd:=	i_xLSpd;
-iq_stPtm.i_xFault:=	i_xFault;
+// Fail-safe boundary inversion: the raw contact is normally closed, so TRUE means the controller is healthy
+iq_stPtm.i_xFault:= NOT i_xAlarmOK;
 (* Real-value calculation *)
 If (iTermBits=0) THEN iTermBits := 32767;END_IF
 iq_stPtm.i_rCurrentMon := (10*INT_TO_REAL(i_iCurrentMon)/iTermBits)*rCurrentScale;

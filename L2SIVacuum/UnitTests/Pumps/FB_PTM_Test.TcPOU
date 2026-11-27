@@ -67,13 +67,17 @@ IF( cycle = 3) THEN
     TEST_FINISHED_NAMED('PTM_Twistorr_Interlock_Active');
 END_IF
 
-TEST('PTM_Twistorr_Interlock_OK');
+TEST('PTM_Twistorr_AlarmOK_Lost_Faults');
+// The TwisTorr controller FAULT contact is normally closed, so the block must fault and refuse
+// to run whenever the alarm-OK signal is not present (unlinked input, lost signal, unpowered
+// controller) - even with the external interlock permit granted.
 fb_TwisTorr.M_Run(TRUE);
 fb_TwisTorr(i_xExtILKOk:= TRUE , iq_stPtm=> );
 IF( cycle = 3) THEN
-    AssertTrue(fb_TwisTorr.iq_stPtm.xRunSW ,'PTM Twistorr xRunSW is set to False');
-    AssertTrue(fb_TwisTorr.iq_stPtm.q_RunDO ,'PTM Twistorr q_RunDO is set to False');
-    TEST_FINISHED_NAMED('PTM_Twistorr_Interlock_OK');
+    AssertTrue(fb_TwisTorr.iq_stPtm.i_xFault ,'PTM Twistorr fail-safe alarm-OK input did not force a fault');
+    AssertFalse(fb_TwisTorr.iq_stPtm.xRunSW ,'PTM Twistorr xRunSW is set while the alarm-OK signal is lost');
+    AssertFalse(fb_TwisTorr.iq_stPtm.q_RunDO ,'PTM Twistorr q_RunDO is set while the alarm-OK signal is lost');
+    TEST_FINISHED_NAMED('PTM_Twistorr_AlarmOK_Lost_Faults');
 END_IF
 
 TEST('PTM_Twistorr_Interlock_Lost');

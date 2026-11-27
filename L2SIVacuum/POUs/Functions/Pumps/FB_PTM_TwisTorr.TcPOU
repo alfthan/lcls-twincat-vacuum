@@ -2,10 +2,18 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_TwisTorr" Id="{91de0c91-34da-4736-bacc-23eca1b0004f}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Agilent TwisTorr 304 FS with on board Controller.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+
+ Fail-safe convention: the controller FAULT output is read as a normally closed (NC) alarm-OK
+ signal, i.e. TRUE means the controller reports no fault. A FALSE reading - real fault, alarm,
+ unpowered controller, broken wiring or otherwise lost signal - faults the pump and drops the
+ run output, so a missing fault signal is never taken for a healthy one.
+*)
 FUNCTION_BLOCK FB_PTM_TwisTorr EXTENDS FB_Pump
 VAR_INPUT
-    i_xExtILKOk : BOOL; // Connect to external interlock logic, TRUE if not used.
+    // External interlock permit: TRUE = interlocks satisfied (wire to the pump interlock function).
+    // Fail-safe: defaults to FALSE, so unwired or lost interlock logic keeps the pump from running.
+    i_xExtILKOk : BOOL;
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := ' pv: '}
@@ -15,7 +23,9 @@ VAR
     xRunOk	:	BOOL;
     (*IO*)
     i_xAtSpd AT%I*: BOOL; // Normaml operation when true
-    i_xFault AT%I*: BOOL; // Error // this open collector output signal is ON when a system fault condition is detected
+    // Fail-safe (normally closed) controller FAULT contact: TRUE = controller healthy (no fault).
+    // FALSE = fault, alarm, unpowered controller or broken wiring, i.e. a lost signal faults the pump.
+    i_xAlarmOK AT%I*: BOOL;
     q_RunDO AT%Q*: BOOL; // Start/Stop
 END_VAR
 
@@ -24,6 +34,8 @@ END_VAR
     <Implementation>
       <ST><![CDATA[
 (* Interlock Sum *)
+(* Single fail-safe polarity: the permit (xExtRunOk) is TRUE when it is safe to run and the fault
+   branch is TRUE when the pump is faulted, so running requires a granted permit and no fault. *)
 iq_stPtm.xExtRunOk:= i_xExtILKOk;
 xRunOk := iq_stPtm.xExtRunOk AND NOT iq_stPtm.i_xFault;
 
@@ -60,7 +72,9 @@ ACT_Persistent();
       <Implementation>
         <ST><![CDATA[(*Inputs*)
 iq_stPtm.i_xAtSpd := i_xAtSpd;
-iq_stPtm.i_xFault := i_xFault;
+(* Fail-safe boundary inversion: the raw contact is normally closed, so TRUE means the controller is healthy.
+   Inverting here makes a FALSE (lost, unpowered or mis-wired) signal read as a fault. *)
+iq_stPtm.i_xFault := NOT i_xAlarmOK;
 
 
 (*Outputs*)
@@ -96,7 +110,7 @@ IF tAction.Q THEN fbLogger(sMsg:='Pump commanded to start', eSevr:=TcEventSeveri
 
 
 // Log FAULT
-tFault(CLK:= NOT iq_stPTM.i_xFault);
+tFault(CLK:= iq_stPTM.i_xFault); // rising edge = alarm-OK contact opened (fault or lost signal)
 IF tFault.Q THEN fbLogger(sMsg:='Pump Lost Alarm OK bit', eSevr:=TcEventSeverity.Critical); END_IF
 
 ]]></ST>
