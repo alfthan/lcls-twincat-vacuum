@@ -28,7 +28,7 @@ VAR_INPUT
     {attribute 'pytmc' := '
     pv: EPS_OK
     '}
-    i_xEPS_OK:	BOOL	:= TRUE; (*External EPS interlock, Set to TRUE when no EPS interlock is required, otherwise set to correct interlock signal*)
+    i_xEPS_OK:	BOOL	:= FALSE; (*External EPS interlock permit. Defaults to FALSE so an unwired or lost EPS interlock keeps the valve closed. The caller must explicitly drive this TRUE only when the EPS interlock is confirmed safe and wired, or when no EPS interlock is required*)
     {attribute 'pytmc' := '
     pv: MPS_OK
     '}
