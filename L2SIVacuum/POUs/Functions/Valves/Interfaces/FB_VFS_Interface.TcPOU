@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VFS_Interface" Id="{57bc9317-df03-4829-82d4-3e35e70264fe}" SpecialFunc="None">
     <Declaration><![CDATA[(*Used as soft IO mapping to create a psuedo valve to communicate over two task on the same PLC.*)
@@ -19,11 +19,20 @@ VAR
     rtTriggerVetoed : R_TRIG;
     rtTriggered : R_TRIG;
     tonOvrd	:	TON;
-    tOvrd	:	TIME := T#10s;
     rtOK	:	R_TRIG;
     tonDelOK : TON;
     xOPN_OK : BOOL;
-    tDelOK	:	TIME := T#60S;
+
+    (* Tunable configuration and timeout durations.
+       stConfig is the working copy and is restored from the persistent store (stConfigPersistent)
+       on the first PLC scan. A member changed online is written back to the store only when it
+       differs from the last written value (stConfigLastWritten) and only after the throttle
+       interval (tPersistWriteThrottle). See ACT_Persistent. *)
+    stConfig : ST_VFS_Config;
+    stConfigLastWritten	:	ST_VFS_Config; // Cache of the values last written to the persistent store
+    bPersistWritePending	:	BOOL; // A changed value was detected and a store write is queued
+    tonPersistWrite			:	TON; // Throttles writes to the persistent store
+    tPersistWriteThrottle	:	TIME := T#5S; // Minimum interval between persistent-store writes
 
     (*outputs*)
     q_xPRESS_OK AT%Q*: BOOL;
@@ -49,8 +58,11 @@ VAR
     i_xMPS_OK AT%I*: BOOL;(*MPS Fault OK, is set when the Valve is Open and there is no trigger*)
     i_eVFS_State AT%I*: E_VGC; (*Interface*)
 
+END_VAR
 
-
+VAR PERSISTENT
+    (* Tunables and timeout durations as stored; written back only on change, after the throttle interval *)
+    stConfigPersistent : ST_VFS_Config;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(*soft IO Mapping*)

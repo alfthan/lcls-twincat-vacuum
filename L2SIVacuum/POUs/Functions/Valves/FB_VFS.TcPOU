@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VFS" Id="{68519563-003c-4daf-ae0e-7245b1fe09af}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block implements basic functionality for Fast Shutter/Valves*)
@@ -26,7 +26,6 @@ VAR
         i_Desc := 'Fault occurs when fast valve is not in open state',
         i_TypeCode := 16#1010);
 
-    rDiffPressAllowed	:	REAL := 22.5; // Torr, Default value comes from Vat Valve Manual
     rDiffPress : REAL;
     set : BOOL;
     reset: BOOL;
@@ -38,23 +37,27 @@ VAR
     tonDelOK : TON;
     rtOK	:	R_TRIG;
     tonOvrd	:	TON;
-
-    tDelOK	:	TIME := T#60S;
-    tOvrd	:	TIME := T#10s;
     rTrigOverrideOpen : R_TRIG;
 
     xClose: BOOL;
     xOpen: BOOL;
     CloseTimer: TON;
-    TimDur: TIME := T#20MS;
     OpenTimer: TON;
-    OpenTimDur: TIME := T#2S;
 
     (* Timeouts*)
-    tCLSTimeOutDuration: TIME:= T#0.5S;
-    tOPNTimeOutDuration: TIME:= T#10S;
     tOPNtimeout: TON;
     tCLStimeout:TON;
+
+    (* Tunable configuration and timeout durations.
+       stConfig is the working copy and is restored from the persistent store (stConfigPersistent)
+       on the first PLC scan. A member changed online is written back to the store only when it
+       differs from the last written value (stConfigLastWritten) and only after the throttle
+       interval (tPersistWriteThrottle). See ACT_Persistent. *)
+    stConfig : ST_VFS_Config;
+    stConfigLastWritten	:	ST_VFS_Config; // Cache of the values last written to the persistent store
+    bPersistWritePending	:	BOOL; // A changed value was detected and a store write is queued
+    tonPersistWrite			:	TON; // Throttles writes to the persistent store
+    tPersistWriteThrottle	:	TIME := T#5S; // Minimum interval between persistent-store writes
 
 
     (*IO*)
@@ -84,6 +87,11 @@ VAR
     q_xMPS_OK	 AT%Q*:	BOOL; (*MPS Fault OK, is set when the Valve is Open and there is no trigger*)
     q_eVFS_State AT%Q*: E_VGC; (*Interface*)
 
+END_VAR
+
+VAR PERSISTENT
+    (* Tunables and timeout durations as stored; written back only on change, after the throttle interval *)
+    stConfigPersistent : ST_VFS_Config;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[
@@ -104,6 +112,10 @@ IF xFirstPass THEN
     fbFF.i_DevName := i_sDevName;
     xFirstPass := FALSE;
 END_IF
+
+(* Restore the tunables from the persistent store on the first scan and write back
+   changes, change-detected and throttled *)
+ACT_Persistent();
 
 
 (*set Veto bit*)
@@ -177,7 +189,7 @@ Solution: Override only after ten seconds of override, protect against blips,
 when the valve permission goes true for more than ten seconds consistently, remove override
 *)
 rTrigOverrideOpen(CLK:= i_xOverrideOpen);
-tonDelOK(IN:=xOPN_OK, PT:=tDelOK);
+tonDelOK(IN:=xOPN_OK, PT:=stConfig.tDelOK);
 rtOK(CLK:=tonDelOK.Q);
 IF rtOK.Q AND i_xOverrideOpen THEN
     i_xOverrideOpen :=FALSE;
@@ -187,7 +199,7 @@ IF rtOK.Q AND i_xOverrideOpen THEN
 END_IF
 
 //Override timer
-tonOvrd(IN:=i_xOverrideOpen, PT:=tOvrd);
+tonOvrd(IN:=i_xOverrideOpen, PT:=stConfig.tOvrd);
 
 
 //Assign valve state
@@ -201,10 +213,10 @@ ELSE q_eVFS_State :=  E_VGC.At_Vac;
 END_IF
 
 (*Timers*)
-CloseTimer ( IN:=xClose, PT:= TimDur, Q=>);
-OpenTimer ( IN:=i_xOpnLS, PT:= OpenTimDur, Q=>);
-tOPNtimeout(IN:= q_xOPN_DO, PT := tOPNTimeOutDuration);
-tCLStimeout(IN:= q_xClose_A, PT := tCLSTimeOutDuration);
+CloseTimer ( IN:=xClose, PT:= stConfig.TimDur, Q=>);
+OpenTimer ( IN:=i_xOpnLS, PT:= stConfig.OpenTimDur, Q=>);
+tOPNtimeout(IN:= q_xOPN_DO, PT := stConfig.tOPNTimeOutDuration);
+tCLStimeout(IN:= q_xClose_A, PT := stConfig.tCLSTimeOutDuration);
 rtOPN_SW(CLK:= i_xOPN_SW);
 
 (* Soft IO Mapping*)
@@ -247,6 +259,60 @@ END_IF]]></ST>
 q_xTrigger := i_xTrigger;
 q_xVFS_Closed:= i_xClsLS;
 q_xVFS_Open:= i_xOpnLS;]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="ACT_Persistent" Id="{b5bf4a4d-14aa-4e37-b34e-ed0184e111fd}">
+      <Implementation>
+        <ST><![CDATA[(* Persistent tunables and timeout durations (ST_VFS_Config).
+On the first PLC scan the working copy (stConfig) is restored from the persistent store
+(stConfigPersistent); members the store holds no valid value for keep the ST_VFS_Config defaults.
+After that, a value changed online in stConfig is detected against the last written cache
+(stConfigLastWritten) and written back to the store only once the throttle interval
+(tPersistWriteThrottle) has elapsed.*)
+
+(*First scan: restore the tunables from the persistent store*)
+IF (SUPER^.bRestorePersistentData) THEN
+    SUPER^.bRestorePersistentData := FALSE;
+    IF stConfigPersistent.tOvrd > T#0S THEN
+        stConfig.tOvrd := stConfigPersistent.tOvrd;
+    END_IF
+    IF stConfigPersistent.tDelOK > T#0S THEN
+        stConfig.tDelOK := stConfigPersistent.tDelOK;
+    END_IF
+    IF stConfigPersistent.tCLSTimeOutDuration > T#0S THEN
+        stConfig.tCLSTimeOutDuration := stConfigPersistent.tCLSTimeOutDuration;
+    END_IF
+    IF stConfigPersistent.tOPNTimeOutDuration > T#0S THEN
+        stConfig.tOPNTimeOutDuration := stConfigPersistent.tOPNTimeOutDuration;
+    END_IF
+    IF stConfigPersistent.TimDur > T#0S THEN
+        stConfig.TimDur := stConfigPersistent.TimDur;
+    END_IF
+    IF stConfigPersistent.OpenTimDur > T#0S THEN
+        stConfig.OpenTimDur := stConfigPersistent.OpenTimDur;
+    END_IF
+    IF stConfigPersistent.rDiffPressAllowed > 0.0 THEN
+        stConfig.rDiffPressAllowed := stConfigPersistent.rDiffPressAllowed;
+    END_IF
+    stConfigLastWritten := stConfig;
+END_IF
+
+(*Change detection against the last written cache*)
+bPersistWritePending := (stConfig.tOvrd <> stConfigLastWritten.tOvrd)
+    OR (stConfig.tDelOK <> stConfigLastWritten.tDelOK)
+    OR (stConfig.tCLSTimeOutDuration <> stConfigLastWritten.tCLSTimeOutDuration)
+    OR (stConfig.tOPNTimeOutDuration <> stConfigLastWritten.tOPNTimeOutDuration)
+    OR (stConfig.TimDur <> stConfigLastWritten.TimDur)
+    OR (stConfig.OpenTimDur <> stConfigLastWritten.OpenTimDur)
+    OR (stConfig.rDiffPressAllowed <> stConfigLastWritten.rDiffPressAllowed);
+
+(*Throttled write back to the persistent store*)
+tonPersistWrite(IN:=bPersistWritePending, PT:=tPersistWriteThrottle);
+IF tonPersistWrite.Q THEN
+    stConfigPersistent := stConfig;
+    stConfigLastWritten := stConfig;
+    bPersistWritePending := FALSE;
+END_IF]]></ST>
       </Implementation>
     </Action>
   </POU>

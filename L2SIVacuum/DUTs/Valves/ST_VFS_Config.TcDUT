@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_VFS_Config" Id="{34a0e51c-cf56-4590-9a6e-87e1b0f95906}">
+    <Declaration><![CDATA[(* Tunable configuration of the fast shutter/valve blocks (FB_VFS, FB_VFS_Interface).
+   The values are held in a persistent store per function block instance, restored into the
+   working copy on the first PLC scan and written back only on change, after a throttle interval.
+   The initialisers below are the defaults used when the store holds no valid value yet.
+   Units: TIME in IEC time literals, pressures in Torr. *)
+TYPE ST_VFS_Config :
+STRUCT
+    (* Override handling *)
+    tOvrd : TIME := T#10s; // Override qualification time: how long the override request must be held before it is honoured (and how long it lasts)
+    tDelOK : TIME := T#60S; // Delayed OK time: how long the open permission must be continuously true before an override is cleared
+
+    (* Valve motion supervision *)
+    tCLSTimeOutDuration : TIME := T#0.5S; // Maximum time allowed to reach the closed limit switch before a close timeout is raised
+    tOPNTimeOutDuration : TIME := T#10S; // Maximum time allowed to reach the open limit switch before an open timeout is raised
+    TimDur : TIME := T#20MS; // Duration of the close output pulse
+    OpenTimDur : TIME := T#2S; // Duration of the open output pulse / open position confirmation window
+
+    (* Interlocks *)
+    rDiffPressAllowed : REAL := 22.5; // Torr, maximum differential pressure allowed across the valve, default from Vat Valve Manual
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>
