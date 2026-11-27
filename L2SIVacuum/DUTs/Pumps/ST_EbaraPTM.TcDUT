@@ -6,6 +6,17 @@ STRUCT
 (* Extension of the PTM archetype for Ebara turbo controllers
 Applicable to:
 ETC series
+
+Manual override policy (conv_eeb5d87743fc - an override is time-qualified, self-clearing and
+never a bypass of safety interlocks):
+- i_xOverride only *requests* an override of the vacuum run logic (EPICS OVRD_ON). The pump
+  function block honours it only while the external interlock permit (ST_PTM.xExtRunOk, supplied
+  by the caller's F_<Device>_ILK function) is TRUE, and only after the request has been held
+  continuously for the qualification time tOvrd of FB_PTM_Ebara, FB_PTM_Ebara_010M or
+  FB_PTM_Ebara_011M.
+- The override clears itself after the configured maximum duration (tOvrdMax) and whenever the
+  interlock permit is lost, so it can never be left on and can never energise the pump while the
+  interlocks are not satisfied.
 *)
 //Controls
     {attribute 'pytmc' := '
@@ -55,7 +66,7 @@ q_iSpeedSet   : DINT; //Requested speed (min. 100Hz)
     field: ONAM ON;
     io: io
     '}
-i_xOverride   : BOOL; //Override mode - ignores interlocks
+i_xOverride   : BOOL; //Manual override *request* (OVRD_ON) - time-qualified (tOvrd), self-clearing (tOvrdMax) and gated by the interlock permit (ST_PTM.xExtRunOk). Never bypasses interlocks.
 
 //Readbacks - also has Accel/At speed/Decel/Fault/Cur Speed (min 100RPM)
     {attribute 'pytmc' := '

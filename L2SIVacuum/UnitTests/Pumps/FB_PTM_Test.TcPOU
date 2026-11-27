@@ -25,6 +25,7 @@ END_VAR
       <ST><![CDATA[M_INIT();
 M_Interlock();
 M_PTM_EBARA();
+M_Override();
 cycle:=cycle+1;]]></ST>
     </Implementation>
     <Method Name="M_INIT" Id="{09056c01-bd86-4734-bc9b-0823ada814a0}">
@@ -128,6 +129,59 @@ IF( cycle = 10) THEN
 
 
 End_IF;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Override" Id="{c4f1a2d7-6b39-4e51-9f0c-2d8b7a5e9c31}">
+      <Declaration><![CDATA[METHOD M_Override
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Manual override policy coverage (conv_eeb5d87743fc / audit finding #566):
+   a manual override is time-qualified, self-clearing and never a bypass of the safety interlock.
+   fb_PTM_Ebara_010M is the compiled Ebara PTM block that owns ST_EbaraPTM.i_xOverride. *)
+
+(* An override must never run the pump while the interlock permit is not satisfied *)
+TEST('PTM_EBARA_Override_NoILK');
+fb_PTM_Ebara_010M.tOvrd := T#0S; //qualify immediately, no wait inside the test
+fb_PTM_Ebara_010M.tOvrdMax := T#5M;
+fb_PTM_Ebara_010M.xOvrdExpired := FALSE;
+fb_PTM_Ebara_010M.iq_stPTM.i_xOverride := TRUE;
+fb_PTM_Ebara_010M.iq_stPTM.xRunSW := TRUE;
+fb_PTM_Ebara_010M(i_xExtILKOk:= FALSE, iq_stPTM=> );
+AssertFalse(fb_PTM_Ebara_010M.iq_stPTM.q_RunDO, 'PTM EBARA override ran the pump with the interlock not satisfied');
+TEST_FINISHED_NAMED('PTM_EBARA_Override_NoILK');
+
+(* With the interlock permit satisfied the qualified override still runs the pump *)
+TEST('PTM_EBARA_Override_ILK_OK');
+fb_PTM_Ebara_010M.tOvrd := T#0S;
+fb_PTM_Ebara_010M.tOvrdMax := T#5M;
+fb_PTM_Ebara_010M.xOvrdExpired := FALSE;
+fb_PTM_Ebara_010M.iq_stPTM.i_xOverride := TRUE;
+fb_PTM_Ebara_010M.iq_stPTM.xRunSW := TRUE;
+fb_PTM_Ebara_010M(i_xExtILKOk:= TRUE, iq_stPTM=> );
+AssertTrue(fb_PTM_Ebara_010M.xOvrdActive, 'PTM EBARA override was not qualified with the interlock OK');
+AssertTrue(fb_PTM_Ebara_010M.iq_stPTM.q_RunDO, 'PTM EBARA override did not run the pump with the interlock OK');
+TEST_FINISHED_NAMED('PTM_EBARA_Override_ILK_OK');
+
+(* A qualified override clears itself once tOvrdMax has elapsed *)
+TEST('PTM_EBARA_Override_SelfClear');
+fb_PTM_Ebara_010M.tOvrd := T#0S;
+fb_PTM_Ebara_010M.tOvrdMax := T#0S; //expire the override duration immediately, no wait inside the test
+fb_PTM_Ebara_010M.xOvrdExpired := FALSE;
+fb_PTM_Ebara_010M.iq_stPTM.i_xOverride := TRUE;
+fb_PTM_Ebara_010M.iq_stPTM.xRunSW := TRUE;
+fb_PTM_Ebara_010M(i_xExtILKOk:= TRUE, iq_stPTM=> );
+AssertTrue(fb_PTM_Ebara_010M.xOvrdExpired, 'PTM EBARA override did not self-clear after tOvrdMax');
+AssertFalse(fb_PTM_Ebara_010M.xOvrdActive, 'PTM EBARA override stayed active after tOvrdMax');
+TEST_FINISHED_NAMED('PTM_EBARA_Override_SelfClear');
+
+//Restore the production timing values and drop the retained request
+fb_PTM_Ebara_010M.tOvrd := T#10S;
+fb_PTM_Ebara_010M.tOvrdMax := T#5M;
+fb_PTM_Ebara_010M.iq_stPTM.i_xOverride := FALSE;
+fb_PTM_Ebara_010M.iq_stPTM.xRunSW := FALSE;
+fb_PTM_Ebara_010M(i_xExtILKOk:= TRUE, iq_stPTM=> );]]></ST>
       </Implementation>
     </Method>
   </POU>

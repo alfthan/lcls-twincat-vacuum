@@ -2,7 +2,19 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_Ebara_010M" Id="{db9fdbdf-85bb-4e58-96cc-808f2a65a0e5}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Ebara Turbo pump connected to the ETC010M Controller.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+
+ Manual override policy (conv_eeb5d87743fc - an override is time-qualified, self-clearing and never
+ a bypass of safety interlocks):
+ - ST_EbaraPTM.i_xOverride (EPICS OVRD_ON) is only a *request*. It is honoured only after it has been
+   held continuously for the qualification time tOvrd (tonOvrd), so a blip cannot raise an override.
+ - The override clears itself after the configured maximum duration tOvrdMax (tonOvrdMax) unless the
+   operator drops and re-raises the request, so it can never be left on indefinitely.
+ - The override is ANDed with the interlock permit iq_stPTM.xExtRunOk. It can drop the vacuum-logic
+   command, but it can never run the pump while the interlocks are not satisfied; an override request
+   the interlock refuses is logged at Warning severity.
+ History: 2026-11-27 Scirix agent (task #324) - removed the interlock bypass, added the override
+          qualification (tonOvrd/tOvrd) and self-clearing (tonOvrdMax/tOvrdMax) timers. *)
  {attribute 'no_check'}
 FUNCTION_BLOCK FB_PTM_Ebara_010M EXTENDS FB_Pump
 VAR_IN_OUT
@@ -26,6 +38,17 @@ VAR
     RTRIG_INLK: R_TRIG;
     TOF_RESET: TON :=(PT:=T#1S);
     TOF_SetSpeed: TON :=(PT:=T#1S);
+    (* Manual override: qualified, self-clearing and gated by the interlock permit *)
+    tonOvrd : TON;                  (* Override qualification timer: the request must be held for tOvrd *)
+    tonOvrdMax : TON;               (* Override duration timer: an active override expires after tOvrdMax *)
+    rtOvrdExpired : R_TRIG;         (* Rising edge of tonOvrdMax.Q, used for the self-clear and the log entry *)
+    tOvrd : TIME := T#10S;          (* Override qualification time: the request must persist this long before it is honoured *)
+    tOvrdMax : TIME := T#5M;        (* Maximum time an active override stays on before it clears itself *)
+    xOvrdQualified : BOOL;          (* The request is qualified and has not expired yet *)
+    xOvrdActive : BOOL;             (* Effective override: qualified AND not expired. Only ever ANDed with the permit, never instead of it *)
+    xOvrdExpired : BOOL;            (* Latched after tOvrdMax; a dropped request (i_xOverride FALSE) re-arms the override *)
+    xOvrdDenied : R_TRIG;           (* Rising edge of an override request the interlock refuses, for one-shot logging *)
+
 
     (*IO*)
     (*inputs*)
@@ -62,9 +85,14 @@ iq_stPTM.q_xProtection:= TRUE;//iq_stPTM.xExtRunOk;
 (*soft IO mapping*)
 ACT_IO();
 
+(* Manual override handling: qualification, self-clearing and refused-request logging *)
+ACT_Override();
+
 (* Basic pump supervisory section *)
-    (* If override mode, ignore everything else *)
-IF iq_stPTM.i_xOverride THEN
+    (* If the qualified override is active AND the interlock permit (xExtRunOk) is satisfied, the
+       operator's run command drives the pump. The override never bypasses the interlock: the permit
+       is part of this condition, so a lost permit falls through to the fault/hysteresis branches. *)
+IF xOvrdActive AND iq_stPTM.xExtRunOk THEN
     IF iq_stPTM.xRunSW THEN
         iq_stPTM.q_RunDO:=TRUE;
     ELSE
@@ -254,5 +282,44 @@ END_VAR
 this^.iq_stPtm.xRunSW := run;]]></ST>
       </Implementation>
     </Method>
+    <Action Name="ACT_Override" Id="{7AC028BD-7CF3-487A-A402-7F4C87431964}">
+      <Implementation>
+        <ST><![CDATA[(* Manual override handling (conv_eeb5d87743fc: an override is time-qualified, self-clearing and
+   never a bypass of safety interlocks).
+   - Qualification: i_xOverride (EPICS OVRD_ON) must be held continuously for tOvrd (tonOvrd), which
+     protects against blips.
+   - Self-clearing: once honoured the override expires after tOvrdMax (tonOvrdMax). The operator asks
+     for a new one by dropping and re-raising i_xOverride; a dropped request re-arms the timer.
+   - No interlock bypass: xOvrdActive is only ever ANDed with the interlock permit by the supervisory
+     section, so the override can drop the vacuum-logic command but can never run the pump while the
+     interlocks are not satisfied.
+*)
+
+(* A dropped request re-arms the override, so the operator can request a fresh one *)
+IF NOT iq_stPTM.i_xOverride THEN
+    xOvrdExpired := FALSE;
+END_IF
+
+//Qualification timer: the request must persist for tOvrd before it is honoured
+tonOvrd(IN:= iq_stPTM.i_xOverride AND NOT xOvrdExpired, PT:= tOvrd);
+xOvrdQualified := tonOvrd.Q AND iq_stPTM.i_xOverride AND NOT xOvrdExpired;
+
+//Self-clearing duration: an active override never stays on indefinitely
+tonOvrdMax(IN:= xOvrdQualified, PT:= tOvrdMax);
+rtOvrdExpired(CLK:= tonOvrdMax.Q);
+IF rtOvrdExpired.Q THEN
+    xOvrdExpired := TRUE;
+    //Log
+    fbLogger(sMsg:='Override cleared: maximum override duration elapsed', eSevr:=TcEventSeverity.Warning);
+END_IF
+xOvrdActive := xOvrdQualified AND NOT xOvrdExpired;
+
+//Log an override request that the interlock refuses: the override never replaces the permit
+xOvrdDenied(CLK:= xOvrdActive AND NOT iq_stPTM.xExtRunOk);
+IF xOvrdDenied.Q THEN
+    fbLogger(sMsg:='Override request refused, pump interlock not satisfied, pump stays stopped.', eSevr:=TcEventSeverity.Warning);
+END_IF]]></ST>
+      </Implementation>
+    </Action>
   </POU>
 </TcPlcObject>
