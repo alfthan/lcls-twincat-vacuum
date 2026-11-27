@@ -4,6 +4,15 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Baratron (GCM) pressure gauge on a bipolar analog input terminal: the terminal full-scale count
+       and voltage span, plus the gauge minimum readable pressure ratio and its pressure-valid
+       hysteresis. Declared once here instead of inside FB_GCM so each scaling factor and limit has a
+       single definition and a different Baratron model is a constants change, not a logic change. *)
+    gc_uiGCMTermBits      : UINT := 32767;  // Full-scale raw count of the 16 bit bipolar (+/-10 V) analog input terminal
+    gc_rGCMFullScaleVolts : REAL := 10.0;   // Terminal voltage [V] that corresponds to the full-scale raw count
+    gc_rGCMMinPressRatio  : REAL := 5.0E-4; // Lowest pressure a Baratron resolves, as a fraction of its full-scale pressure
+    gc_rGCMHystPerc       : REAL := 0.80;   // Pressure-valid hysteresis: fraction of the minimum readable pressure that keeps xPRESS_OK asserted
 END_VAR
 ]]></Declaration>
   </GVL>

@@ -5,41 +5,66 @@
 (*The full-scale pressure times the ratio of the meas.
 voltage to full-scale voltage (10V).
 The minimum pressure is always going to be 5e-4 * F.S.V.*)
+(* Usage: link i_iPRESS_R to the 0..10 V analog input that carries the Baratron output, set
+   i_rFULL_SCALE to the full-scale pressure of the fitted gauge and read pressure, state and
+   validity from PG. Call M_SetBits first if the analog terminal resolution is not the default. *)
+(* Objectives: convert the raw terminal counts into a terminal voltage, scale that voltage by the
+   gauge full scale and classify the reading against the gauge minimum readable pressure. *)
+(* The terminal full-scale count and voltage span, the minimum-pressure ratio and the hysteresis
+   percentage are declared once in GVL Constants (gc_uiGCMTermBits, gc_rGCMFullScaleVolts,
+   gc_rGCMMinPressRatio, gc_rGCMHystPerc) and referenced by name only, so each scaling factor and
+   limit has a single definition and a different gauge model is a constants change. *)
+(* History:
+     2016-06-16 - A. Wallace: Baratron pressure calculation
+     2026-11-27 - the hardware scaling and limit literals were replaced with the named constants in
+                  GVL Constants and the hysteresis percentage is now applied to xPRESS_OK. *)
 FUNCTION_BLOCK FB_GCM
 VAR_IN_OUT
 
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv:'}
-    PG	:	ST_VG;
+    PG	:	ST_VG; // Gauge interface struct: pressure, full scale, state and xPRESS_OK
 END_VAR
 VAR_INPUT
-    i_rFULL_SCALE : REAL;
+    i_rFULL_SCALE : REAL; // Full-scale pressure of the fitted Baratron, same EGU as PG.rPRESS
 END_VAR
 VAR
-    rMinPressure: REAL;
-    rHYST_PERC	:	REAL := 0.80;	// Hysteresis percentage
-    rV	:REAL;
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    rMinPressure: REAL; // Minimum readable pressure of the fitted gauge = full scale * gc_rGCMMinPressRatio
+    rOkThreshold: REAL; // Pressure the reading has to beat to set, and to fall below to clear, xPRESS_OK
+    rV	:REAL; // Terminal voltage [V] of the pressure signal
+    iTermBits: UINT; // The terminal's maximum value in bits, loaded from gc_uiGCMTermBits unless M_SetBits set it
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
-END_VAR
-]]></Declaration>
+END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* Baratron Pressure Calc
 A. Wallace
 2016-6-16
 The full-scale pressure times the ratio of the meas.
 voltage to full-scale voltage (10V).
-The minimum pressure is always going to be 5e-4 * F.S.V.*)
+The minimum pressure is always going to be gc_rGCMMinPressRatio * F.S.V.
+All hardware scaling and limit values are named constants in GVL Constants. *)
 PG.rFULL_SCALE := i_rFULL_SCALE;
-rMinPressure := PG.rFULL_SCALE * 5E-4;
+rMinPressure := PG.rFULL_SCALE * gc_rGCMMinPressRatio;
 
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
-rV :=MAX((10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits),0);
+(* The terminal resolution is a hardware property: zero means not configured, so the default
+   from GVL Constants applies. M_SetBits overrides it for a different terminal. *)
+IF (iTermBits=0) THEN
+    iTermBits := gc_uiGCMTermBits;
+END_IF
+rV :=MAX((gc_rGCMFullScaleVolts*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits),0);
 
-PG.rPRESS := (PG.rFULL_SCALE/10)*rV;
-IF PG.rPRESS > (rMinPressure)THEN
+PG.rPRESS := (PG.rFULL_SCALE/gc_rGCMFullScaleVolts)*rV;
+
+(* Pressure valid check with hysteresis: the reading has to rise above the minimum readable
+   pressure to be declared valid, and keeps xPRESS_OK until it falls below gc_rGCMHystPerc of that
+   pressure, so a reading sitting at the gauge noise floor cannot chatter xPRESS_OK / eState *)
+rOkThreshold := rMinPressure;
+IF PG.xPRESS_OK THEN
+    rOkThreshold := rMinPressure * gc_rGCMHystPerc;
+END_IF
+IF PG.rPRESS > (rOkThreshold)THEN
     PG.xPRESS_OK := TRUE;
     PG.eState := Valid;
 ELSE
