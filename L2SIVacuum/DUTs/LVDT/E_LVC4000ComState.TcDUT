@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="E_LVC4000ComState" Id="{60a61b40-8bb6-450d-829e-e6e4a7765601}">
+    <Declaration><![CDATA[(* States of the round-robin polling state machine in FB_LVC4000Com.
+   One named state per action; the transitions are documented in FB_LVC4000Com. *)
+TYPE E_LVC4000ComState :
+(
+    LVC_IDLE := 0,          // Between transactions - start a polling round -> LVC_START
+    LVC_START := 1,         // Execute raised for the selected unit -> LVC_WAIT_REPLY
+    LVC_WAIT_REPLY := 2,    // Waiting for the driver outcome -> LVC_CLEAR on Done or Error
+    LVC_CLEAR := 3,         // Execute dropped, driver re-armed -> LVC_NEXT
+    LVC_NEXT := 4           // Round-robin index advanced to the next unit -> LVC_IDLE
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

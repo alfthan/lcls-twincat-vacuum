@@ -8,49 +8,105 @@ A. Wallace 2016-7-20
 This FB is used for communicating with the LVC-4000 LVDT signal conditioners on
 RS-485. It is set up for multiple conditioners on one interface.
 
+The conditioners are polled one at a time in an explicit non-blocking round-robin
+state machine (E_LVC4000ComState). Only one serial transaction is ever in flight:
+each state performs a single action and leaves on the condition listed below.
+
+    state          action of the state                    transition
+    -------------  -------------------------------------  --------------------------------
+    LVC_IDLE       wait for a unit to poll                 -> LVC_START     if i_iQty > 0
+    LVC_START      raise execute for the selected unit     -> LVC_WAIT_REPLY
+    LVC_WAIT_REPLY wait for the outcome of that driver     -> LVC_CLEAR     on q_xDone
+                                                           -> LVC_CLEAR     on q_xError
+    LVC_CLEAR      drop execute to re-arm the driver       -> LVC_NEXT
+    LVC_NEXT       advance the round-robin index           -> LVC_IDLE      (wraps to 1)
+
+The reply wait is bounded inside the driver by tTimeOut, which reports the expiry
+as q_xError/q_xTimeout. A failing unit does not stop the round: the sequence drops
+execute, advances to the next unit and retries the failed unit when the index comes
+round again. The last outcome is kept in the unit's own iq_astLVC4000[i].xTimeout.
+
 Usage:
 Pass the array of your LVC4000 structures to the FB, along with your serial RX and TX buffers.
 Also pass the number of LVC-4000 connected to the bus. This must be less than gcMaxLVC4000.
 
+History:
+A. Wallace 2016-7-20  created
+2026-11-27            round-robin polling refactored from an iUnit counter with IF
+                      transitions into the named-state machine documented above
 *)
 VAR_IN_OUT
-    iq_astLVC4000: ARRAY[1..gcMaxLVC4000] OF ST_SerLVC4000;
-    afbLVC4000SerialDriver: ARRAY[1..gcMaxLVC4000] OF FB_LVC4000SerialDriver;
-    SerialRXBuffer: ComBuffer;
-    SerialTXBuffer: ComBuffer;
+    iq_astLVC4000: ARRAY[1..gcMaxLVC4000] OF ST_SerLVC4000; // Per-unit LVDT data (readback, controls, address)
+    afbLVC4000SerialDriver: ARRAY[1..gcMaxLVC4000] OF FB_LVC4000SerialDriver; // One serial driver per unit
+    SerialRXBuffer: ComBuffer; // Shared serial receive buffer of the RS-485 port
+    SerialTXBuffer: ComBuffer; // Shared serial transmit buffer of the RS-485 port
 END_VAR
 VAR_INPUT
-    i_iQty	:	INT := 0;
+    i_iQty	:	INT := 0; // Number of LVC-4000 units on the bus, clamped to gcMaxLVC4000
 END_VAR
 VAR
-    iUnit: INT := 1;
-    tTimeOut: TIME := TIME#1s0ms;
+    eState: E_LVC4000ComState := LVC_IDLE; // State of the round-robin polling machine
+    iUnit: INT := 1; // Index of the unit currently being polled
+    xDriverExecute: BOOL; // Execute level held for the unit currently being polled
+    tTimeOut: TIME := TIME#1s0ms; // Reply timeout handed to the serial driver
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This program is called from Serial PTM IO *)
 
+(* Clamp the requested unit count to the size of the per-unit arrays *)
 i_iQty := MIN(i_iQty, gcMaxLVC4000);
 
-(* scan the units one at a time *)
+(* Round-robin polling of the LVC-4000 units. Each state performs one action and
+   transitions on the documented condition; no state blocks *)
+CASE eState OF
+    LVC_IDLE:
+        (* Nothing in flight: start a round when at least one unit is configured *)
+        IF i_iQty > 0 THEN
+            (* Keep the index inside the configured range if it shrank while idle *)
+            IF (iUnit < 1) OR (iUnit > i_iQty) THEN
+                iUnit := 1;
+            END_IF
+            eState := LVC_START;
+        END_IF
+
+    LVC_START:
+        (* Raise execute for the selected unit; the driver starts on the rising edge *)
+        xDriverExecute := TRUE;
+        eState := LVC_WAIT_REPLY;
+
+    LVC_WAIT_REPLY:
+        (* Wait for the outcome of the selected unit's driver *)
+        IF afbLVC4000SerialDriver[iUnit].q_xDone THEN
+            (* Reply received and parsed into iq_astLVC4000[iUnit] *)
+            eState := LVC_CLEAR;
+        ELSIF afbLVC4000SerialDriver[iUnit].q_xError THEN
+            (* Timeout or bad reply: xTimeout is kept in the unit, retried next round *)
+            eState := LVC_CLEAR;
+        END_IF
+
+    LVC_CLEAR:
+        (* Drop execute so the driver re-arms for its next transaction *)
+        xDriverExecute := FALSE;
+        eState := LVC_NEXT;
+
+    LVC_NEXT:
+        (* One transaction per unit per round: step the index, wrapping to the first *)
+        iUnit := iUnit + 1;
+        IF iUnit > i_iQty THEN
+            iUnit := 1;
+        END_IF
+        eState := LVC_IDLE
+END_CASE
+
+(* One driver call per scan, for the unit under poll only. The execute level is owned
+   by the state machine, so LVC_START/LVC_CLEAR provide the rising/falling edge *)
 afbLVC4000SerialDriver[iUnit](
-    i_xExecute:= TRUE,
+    i_xExecute:= xDriverExecute,
     i_tTimeOut:= tTimeOut,
     iq_stLVC4000:=iq_astLVC4000[iUnit] ,
     iq_stSerialRXBuffer:= SerialRXBuffer,
     iq_stSerialTXBuffer:=  SerialTXBuffer,
-    );
-
-IF afbLVC4000SerialDriver[iUnit].q_xDone
-OR afbLVC4000SerialDriver[iUnit].q_xError
-THEN
-        (* reset for next time *)
-        afbLVC4000SerialDriver[iUnit]( i_xExecute:= FALSE, iq_stLVC4000:=iq_astLVC4000[iUnit], iq_stSerialRXBuffer:= SerialRXBuffer, iq_stSerialTXBuffer:=  SerialTXBuffer);
-        (* select next pump *)
-        iUnit := iUnit + 1;
-        IF iUnit > i_iQty THEN
-            iUnit:= 1;
-        END_IF
-END_IF]]></ST>
+    );]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>
