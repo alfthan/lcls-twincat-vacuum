@@ -9,6 +9,7 @@ VAR
     fb_PTM_Test: FB_PTM_Test;
     fb_GPI_Test:FB_GPI_Test;
     fb_GCC_Test:FB_GCC_Test;
+    fb_GaugeModbus_Test:FB_GaugeModbus_Test;
 
     TotalTests : INT:=0;
 END_VAR

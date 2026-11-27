@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_GaugeModbus_Test" Id="{5d9ad76e-166a-4f2a-9ef8-d6b3a824082a}" SpecialFunc="None">
+    <Declaration><![CDATA[(*
+    FB_GaugeModbus_Test - TcUnit suite for the bit-offset handling of
+    FB_GaugeModbus.
+
+    Usage: instantiate once from PRG_Test; the suite drives iBitOffset through
+    the block input and checks the guard outputs on the following cycle.
+    Objectives: prove that a bit offset outside the declared input-coil span
+    (0..31) is rejected, that the boundary values of the span are still
+    accepted, and that M_GetBit refuses every out-of-range byte index / bit
+    number on its own.
+    History:
+      2026-11-27 - created with the iBitOffset bounds check (audit finding #644).
+*)
+FUNCTION_BLOCK FB_GaugeModbus_Test EXTENDS TcUnit.FB_TestSuite
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR
+    fb_GaugeModbus: FB_GaugeModbus; // block under test
+    iTestBitOffset: INT := 0;       // iBitOffset driven into the block for the current scenario
+    cycle:INT :=0;                  // test cycle counter
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[M_CheckBitOffsetBounds();
+// Cycle the block every test cycle so its guard outputs track iTestBitOffset.
+// The loopback address carries no Modbus server, so the read fails and
+// VG.xPRESS_OK is never refreshed from the read path during the test.
+This^.fb_GaugeModbus(IP:='127.0.0.1', nMBAddr:=0, iBitOffset:=iTestBitOffset, tTimeout:=T#10MS);
+cycle:=cycle+1;]]></ST>
+    </Implementation>
+    <Method Name="M_CheckBitOffsetBounds" Id="{dbb5d473-52e2-4c47-a347-bd4873eb08a6}">
+      <Declaration><![CDATA[METHOD M_CheckBitOffsetBounds
+VAR
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('GaugeModbus_BitOffset_Bounds');
+// Cycle N drives iBitOffset, cycle N+1 asserts the guard output of that request
+CASE cycle OF
+    0:
+        iTestBitOffset := -1;
+    1:
+        AssertFalse(This^.fb_GaugeModbus.xBitOffsetValid, 'iBitOffset = -1 must be rejected');
+        iTestBitOffset := 0;
+    2:
+        AssertTrue(This^.fb_GaugeModbus.xBitOffsetValid, 'iBitOffset = 0 must be accepted');
+        iTestBitOffset := 31;
+    3:
+        AssertTrue(This^.fb_GaugeModbus.xBitOffsetValid, 'iBitOffset = 31 must be accepted');
+        iTestBitOffset := 32;
+    4:
+        AssertFalse(This^.fb_GaugeModbus.xBitOffsetValid, 'iBitOffset = 32 must be rejected');
+    5:
+        // The accessor refuses every request outside the declared spans on its
+        // own, so no out-of-range array access is possible even if a caller
+        // bypasses the block-level validation.
+        AssertFalse(This^.fb_GaugeModbus.M_GetBit(iIndex := 0, iBit := 4), 'iIndex = 0 must read FALSE');
+        AssertFalse(This^.fb_GaugeModbus.M_GetBit(iIndex := 5, iBit := 4), 'iIndex = 5 must read FALSE');
+        AssertFalse(This^.fb_GaugeModbus.M_GetBit(iIndex := 1, iBit := -1), 'iBit = -1 must read FALSE');
+        AssertFalse(This^.fb_GaugeModbus.M_GetBit(iIndex := 1, iBit := 8), 'iBit = 8 must read FALSE');
+        TEST_FINISHED_NAMED('GaugeModbus_BitOffset_Bounds');
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

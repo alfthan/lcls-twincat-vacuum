@@ -1,36 +1,68 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_GaugeModbus" Id="{a3fde534-3e0e-4f6e-ae05-bc79ebe7e08a}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_GaugeModbus EXTENDS FB_GaugeBase
+    <Declaration><![CDATA[(*
+    FB_GaugeModbus - interface to a gauge whose health bit lives in the input
+    coils of a legacy Koyo PLC that is read over Modbus TCP.
+
+    Usage:
+      Wire IP and nMBAddr to the legacy PLC and set iBitOffset to the coil
+      number (0..31) of the gauge's pressure-interlock bit inside the 32 input
+      coils read by this block. VG.xPRESS_OK is only re-evaluated while
+      iBitOffset is inside that span and the Modbus read has produced data;
+      otherwise it holds its last trusted value and xBitOffsetValid reports
+      that the request was rejected.
+
+    Objectives:
+      Never index outside i_PLC_nBits. TwinCAT does not range-check array
+      accesses on POU-local variables, so an unchecked offset silently reads
+      adjacent memory and can report an interlock bit taken from unrelated
+      data as healthy.
+
+    History:
+      2026-11-27 - validate iBitOffset against the declared span (0..31),
+                   bound-check iIndex/iBit before indexing, decode the byte and
+                   the bit from the offset instead of using a fixed bit, and
+                   expose xBitOffsetValid (audit finding #644).
+*)
+FUNCTION_BLOCK FB_GaugeModbus EXTENDS FB_GaugeBase
 VAR_INPUT
-    IP: STRING;	//IP of Legacy PLC
-    nMBAddr	:WORD; //Start address of the Register Memory
-    iBitOffset:INT :=0; // must be smaller than 32
-    tTimeout :TIME:= T#1s;
+    IP          : STRING;           // IP address of the legacy PLC
+    nMBAddr     : WORD;             // Start address of the PLC input-coil register block
+    iBitOffset  : INT := 0;         // Coil number of the interlock bit inside the 32 read input coils; valid range 0..31
+    tTimeout    : TIME := T#1s;     // Timeout for one Modbus read
 END_VAR
 VAR_OUTPUT
-    VG: ST_VG;
-    xNoPLCResponse: BOOL;
+    VG              : ST_VG;        // Gauge data; VG.xPRESS_OK holds its last trusted value while the request is invalid
+    xNoPLCResponse  : BOOL;         // TRUE while the legacy PLC does not answer / the read fails
+    xBitOffsetValid : BOOL;         // TRUE when iBitOffset lies inside the declared input span (0..31)
 END_VAR
 VAR
-    fbPLCInputCoilsRx	:	FB_MBReadInputs;// (Modbus function 2)
-    i_PLC_nBits	:	ARRAY [1..4] OF BYTE;
-    ftReset	: F_TRIG;
-    tonRetry : TON;
-    ErrCount:INT :=0;
-    iIndex :INT;
-    iBit:INT;
+    fbPLCInputCoilsRx   : FB_MBReadInputs;      // Modbus function 2 read of the PLC input coils
+    i_PLC_nBits         : ARRAY [1..4] OF BYTE; // 4 bytes = 32 input coils; the spans below are derived from this declaration
+    ftReset             : F_TRIG;               // Falling edge of the read-busy flag
+    tonRetry            : TON;                  // Retry timer used when the read block stops answering
+    ErrCount            : INT := 0;             // Count of logged Modbus read errors
+    iIndex              : INT;                  // 1-based byte index into i_PLC_nBits derived from iBitOffset
+    iBit                : INT;                  // 0-based bit number inside the selected byte derived from iBitOffset
+    rtBitOffsetError    : R_TRIG;               // Rising edge of an out-of-range iBitOffset, used to log the rejection once
 END_VAR
 VAR CONSTANT
-    nZero : INT := 0;
-    nOne : INT := 1;
-    nTwo : INT := 2;
-    nThree : INT := 3;
-    nFour : INT := 4;
-    nFive : INT := 5;
-    nSix : INT := 6;
-    nSeven : INT := 7;
-END_VAR]]></Declaration>
+    nZero           : INT := 0;    // Literal 0
+    nOne            : INT := 1;    // Literal 1
+    nTwo            : INT := 2;    // Literal 2
+    nThree          : INT := 3;    // Literal 3
+    nFour           : INT := 4;    // Literal 4
+    nFive           : INT := 5;    // Literal 5
+    nSix            : INT := 6;    // Literal 6
+    nSeven          : INT := 7;    // Literal 7
+    nBitsPerByte    : INT := 8;    // Bits per input-coil byte
+    nMinIndex       : INT := 1;    // First valid index of i_PLC_nBits
+    nMaxIndex       : INT := 4;    // Last valid index of i_PLC_nBits; must match the array declaration
+    nMinBitOffset   : INT := 0;    // Lowest valid iBitOffset
+    nMaxBitOffset   : INT := 31;   // Highest valid iBitOffset (nMaxIndex * nBitsPerByte - 1)
+END_VAR
+]]></Declaration>
     <Implementation>
       <ST><![CDATA[A_ReadMB();
 
@@ -61,6 +93,19 @@ ftReset(CLK:=fbPLCInputCoilsRx.bBusy);
 fbPLCInputCoilsRx.bExecute := ftReset.Q OR tonRetry.Q;
 
 fbPLCInputCoilsRx(sIPAddr:=IP, nTCPPort:=502, nQuantity:=32, nMBAddr:=nMBAddr, cbLength:=SIZEOF(i_PLC_nBits),  pDestAddr:=ADR(i_PLC_nBits), tTimeout:=tTimeout);
+
+// Validate the externally supplied bit offset against the declared span before
+// it is used to index the fixed input-coil array. iBitOffset addresses one of
+// the 32 coils held in i_PLC_nBits, so only 0..nMaxBitOffset can be mapped onto
+// the array; anything else is rejected here instead of being converted into an
+// out-of-range index (TwinCAT does not range-check those at runtime).
+xBitOffsetValid := (iBitOffset >= nMinBitOffset) AND (iBitOffset <= nMaxBitOffset);
+
+rtBitOffsetError(CLK:=NOT xBitOffsetValid);
+IF rtBitOffsetError.Q THEN
+    fbLogger(sMsg:='iBitOffset out of range (valid 0..31), holding last PRESS_OK', eSevr:=TcEventSeverity.Warning);
+END_IF
+
 //if there's a modbus error, set all incoming bits to zero
 IF fbPLCInputCoilsRx.bError THEN
     i_PLC_nBits[1].0 := 0;
@@ -84,9 +129,21 @@ IF fbPLCInputCoilsRx.bError THEN
 ELSIF NOT ftReset.Q AND fbPLCInputCoilsRx.cbRead > 0 THEN
     xNoPLCResponse:= FALSE;
     VG.rPRESS := 1E-8;
-    iIndex:= REAL_TO_INT(iBitOffset/8);
-    iBit:= (24 MOD 10);
-    VG.xPRESS_OK := M_GetBit(iIndex,iBit);
+    // Decode the byte index (1-based) and the bit number (0-based) from the
+    // bit offset. The sentinel nZero is rejected by the guard below, so an
+    // invalid request cannot reuse the values derived in an earlier cycle and
+    // silently refresh VG.xPRESS_OK from stale data.
+    iIndex := nZero;
+    iBit := nZero;
+    IF xBitOffsetValid THEN
+        iIndex := (iBitOffset / nBitsPerByte) + nMinIndex;
+        iBit := iBitOffset MOD nBitsPerByte;
+    END_IF
+    // Independent bound check of the derived index and bit before indexing.
+    // When it fails, VG.xPRESS_OK keeps its last trusted value.
+    IF (iIndex >= nMinIndex) AND (iIndex <= nMaxIndex) AND (iBit >= nZero) AND (iBit <= nSeven) THEN
+        VG.xPRESS_OK := M_GetBit(iIndex, iBit);
+    END_IF
     fbPLCInputCoilsRx.bExecute :=False;
 ELSIF (*ftReset.Q*) NOT (fbPLCInputCoilsRx.bExecute) AND fbPLCInputCoilsRx.cbRead = 0 THEN
     xNoPLCResponse:= TRUE;
@@ -98,18 +155,42 @@ IF tAction.Q THEN
 ErrCount:= ErrCount+1;
 fbLogger(sMsg:='Modbus read error', eSevr:=TcEventSeverity.Critical);
 END_IF
-    ]]></ST>
+]]></ST>
       </Implementation>
     </Action>
     <Method Name="M_GetBit" Id="{511583e8-935b-4039-a88b-8ff94a18863d}">
-      <Declaration><![CDATA[METHOD M_GetBit : BOOL
+      <Declaration><![CDATA[(*
+    M_GetBit - read one input coil out of i_PLC_nBits.
+
+    Usage: pass a 1-based byte index (nMinIndex..nMaxIndex) and a 0-based bit
+    number (nZero..nSeven), both derived from the validated iBitOffset.
+    Objectives: never index outside i_PLC_nBits; a request outside the declared
+    spans returns FALSE instead of reading adjacent memory, which TwinCAT does
+    not range-check at runtime.
+    History:
+      2026-11-27 - added the bounds guard (audit finding #644).
+*)
+METHOD M_GetBit : BOOL
 VAR_INPUT
-    iIndex:INT;
-    iBit:INT;
+    iIndex  : INT;  // 1-based byte index into i_PLC_nBits
+    iBit    : INT;  // 0-based bit number inside the selected byte
+END_VAR
+VAR
+    xInRange : BOOL; // TRUE when both the byte index and the bit number are inside their declared spans
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[Case iBit OF
+        <ST><![CDATA[M_GetBit := FALSE;
+
+xInRange := (iIndex >= nMinIndex) AND (iIndex <= nMaxIndex) AND (iBit >= nZero) AND (iBit <= nSeven);
+
+IF NOT xInRange THEN
+    // Out-of-range request: report an unhealthy bit rather than reading
+    // unrelated memory (a POU-local array access is not range-checked).
+    RETURN;
+END_IF
+
+Case iBit OF
     nZero:
         M_GetBit:=i_PLC_nBits[iIndex].nZero;
     nOne:
@@ -126,7 +207,8 @@ END_VAR
         M_GetBit:=i_PLC_nBits[iIndex].nSix;
     nSeven:
         M_GetBit:=i_PLC_nBits[iIndex].nSeven;
-END_CASE]]></ST>
+END_CASE
+]]></ST>
       </Implementation>
     </Method>
   </POU>
