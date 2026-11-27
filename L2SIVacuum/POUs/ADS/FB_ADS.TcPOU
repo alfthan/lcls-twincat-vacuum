@@ -1,18 +1,47 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_ADS" Id="{ab53a300-a8c7-4757-a8eb-e10b4abda9ef}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_ADS
+    <Declaration><![CDATA[(* Base function block shared by the cross-PLC ADS interface blocks
+(* (FB_TGCC_ADS, FB_TGPI_ADS, FB_TPIP_ADS, FB_TVGC_ADS, FB_TVGC_2S_ADS, FB_TBOOL_ADS).*)
+(* It owns the shared event logger, the error edge detector and the ADS read timeout*)
+(* supervisor, so a derived block only adds its own symbol read and conversion.*)
+(* Usage: derive from FB_ADS, issue the read with tTimeout := tAdsTimeout, then call*)
+(* M_AdsTimeout(bBusy := <ads read>.bBusy) and fold the result into the block bError.*)
+(* Objective: a cross-PLC ADS read can never stay busy forever unnoticed - when it does*)
+(* not complete within tAdsTimeout, bAdsTimeOut is raised and the derived block logs a*)
+(* fault with an explicit timeout message.*)
+(* History: 2026-11-27 - added the explicit ADS read timeout and its expiry fault*)
+FUNCTION_BLOCK FB_ADS
 VAR_INPUT
+    tAdsTimeout : TIME := gc_tAdsReadTimeout; // explicit timeout applied to the ADS read of this block
 END_VAR
 VAR_OUTPUT
+    bAdsTimeOut : BOOL; // TRUE while the ADS read stays busy longer than tAdsTimeout
 END_VAR
 VAR
-     fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.FIELDBUS);
+    fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.FIELDBUS);
     tErrorPresent : R_TRIG;
+    fbAdsTimeout : TON; // supervises the busy state of the derived block ADS read
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[]]></ST>
     </Implementation>
+    <Method Name="M_AdsTimeout" Id="{7c4f1d62-8a3b-4e5f-9c21-6d0b8f4a2e17}">
+      <Declaration><![CDATA[(* Supervises one ADS read against tAdsTimeout.
+(* Returns TRUE when the read stayed busy longer than tAdsTimeout; the expiry is also*)
+(* published on bAdsTimeOut so the caller can fold it into its bError and log a fault.*)
+(* History: 2026-11-27 - created for the ADS read timeout finding*)
+METHOD PUBLIC M_AdsTimeout : BOOL
+VAR_INPUT
+    bBusy : BOOL; // bBusy output of the ADS read function block to supervise
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbAdsTimeout(IN:= bBusy, PT:= tAdsTimeout);
+bAdsTimeOut := fbAdsTimeout.Q;
+M_AdsTimeout := bAdsTimeOut;]]></ST>
+      </Implementation>
+    </Method>
   </POU>
 </TcPlcObject>

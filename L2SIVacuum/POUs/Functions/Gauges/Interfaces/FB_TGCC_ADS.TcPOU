@@ -4,6 +4,8 @@
     <Declaration><![CDATA[(* This function block is created for interface devices between different PLC*)
 (* Not all the Variables in the original structure is required, just few signals *)
 (* The variable values are read via ADS using the symbol name*)
+(* The read is bounded by tAdsTimeout (inherited from FB_ADS); expiry raises bAdsTimeOut*)
+(* History: 2026-11-27 - explicit ADS read timeout and expiry fault (finding #978)*)
 FUNCTION_BLOCK FB_TGCC_ADS Extends FB_ADS
 VAR_INPUT
     sNetId : String; //NetID of the Destination PLC controller
@@ -38,7 +40,7 @@ fb_Read_VG(
     sVarName:= CONCAT(sVarName,'.IG'),
     nDestAddr:= ADR(IG),
     nLen:= SIZEOF(IG),
-    tTimeout:= ,
+    tTimeout:= tAdsTimeout,
     eComMode:=eAdsComModeFastCom ,
     bBusy=> ,
     bError=> ,
@@ -53,10 +55,10 @@ fb_CheckWatchdog(
     bWatchdog=> ,
     nLastCnt=> );
 
-bError:= fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog;
+bError:= fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog OR M_AdsTimeout(bBusy:= fb_Read_VG.bBusy);
 tErrorPresent(CLK:=bError);
 
-IF (fb_Read_VG.bError OR fb_CheckWatchdog.bWatchdog) THEN
+IF bError THEN
 IG.xPRESS_OK := FALSE;
 END_IF;
 
@@ -68,6 +70,7 @@ ACT_Logger();]]></ST>
         <ST><![CDATA[IF tErrorPresent.Q THEN
  IF(fb_Read_VG.bError) THEN fbLogger(sMsg:='ADS Read Error', eSevr:=TcEventSeverity.Critical); END_IF;
  IF(fb_CheckWatchdog.bWatchdog) THEN fbLogger(sMsg:='ADS Watchdog Error', eSevr:=TcEventSeverity.Critical); END_IF;
+ IF(bAdsTimeOut) THEN fbLogger(sMsg:='ADS Read Timeout Error: remote PLC did not complete the ADS read within tAdsTimeout', eSevr:=TcEventSeverity.Critical); END_IF;
 END_IF
 ]]></ST>
       </Implementation>
