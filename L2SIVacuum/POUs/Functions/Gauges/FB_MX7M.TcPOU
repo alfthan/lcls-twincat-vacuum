@@ -21,7 +21,7 @@ VAR
     rV : REAL; //Calculated raw voltage from ADC on analog input
     rPress : REAL; //Calculated pressure
     tGaugeTurnOnTmr : TON;
-    iTermBits : UINT := 30518 ; //The terminal's maximum value in bits
+    iTermBits : UINT := gc_iTermBitsEL3174 ; //The terminal's maximum value in bits
 
     (*IOs to be linked*)
     //Controls and I/Os
@@ -50,8 +50,8 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(*Calculate raw voltage*)
-IF (iTermBits = 0) THEN iTermBits := 30518; END_IF
-rV := 10*INT_TO_REAL(i_iPRESS_R)/iTermBits;
+IF (iTermBits = 0) THEN iTermBits := gc_iTermBitsEL3174; END_IF
+rV := gc_fTermFullScaleV*INT_TO_REAL(i_iPRESS_R)/iTermBits;
 
 (*Calculate pressure*)
 rPRESS := LREAL_TO_REAL(EXPT(10,((rV-cBaseV)/cSlope+LOG(cBaseP))));

@@ -4,6 +4,8 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    gc_iTermBitsEL3174 : UINT := 30518; // Full-scale count of the EL3174/EP3174 (10 V range) analog input terminal
+    gc_fTermFullScaleV : REAL := 10.0; // Full-scale voltage of the EL3174/EP3174 analog input terminal [V]
 END_VAR
 ]]></Declaration>
   </GVL>
