@@ -5,6 +5,23 @@
 (* 7-15-2015 *)
 (* This function will read the pressure from any gauge on a 937A. *)
 (* To be used when the specific device function block is not available *)
+(* Usage: link i_iPRESS_R to the 0..10 V analog input that carries the 937A logarithmic pressure
+   output and read pressure, state, xPRESS_OK and the set point flags from the VG interface struct;
+   PG carries the Pirani gauge used for the ion gauge protection and HV disable logic. *)
+(* Objectives: convert the raw terminal counts into a terminal voltage, apply the 937A logarithmic
+   transfer function, classify the reading into the 937A validity windows and maintain xPRESS_OK,
+   the HV disable output and xAT_VAC. *)
+(* The hardware dependent scaling and the cross-cutting limits are named constants in GVL Constants
+   (gc_uiMKS937ATermBits, gc_rMKS937AFullScaleVolts, gc_rMKS937ALogLawBase, gc_rMKS937AVoltsPerDecade,
+   gc_rMKS937AExponentOffset, gc_rMKS937AValidMinVolts, gc_rMKS937AValidMaxVolts, gc_rMKS937ALoBandMinVolts,
+   gc_rMKS937ALoBandMaxVolts, gc_rMKS937AHiBandMinVolts, gc_rMKS937AHiBandMaxVolts) and are referenced
+   by name only, so a different terminal resolution, a re-ranged transmitter or a corrected vendor
+   curve is a one-line edit in that list instead of an edit of this logic. *)
+(* History:
+     2015-07-15 - 937A logarithmic output conversion
+     2026-11-27 - the conversion and state window literals (32767 counts, the 10 V span, the
+                  10 ^ (V / 0.6 - 12) transfer function and the 0.6 / 9.6 / 0.18 / 0.22 / 9.7 / 9.9 V
+                  thresholds) were replaced with the named constants in GVL Constants. *)
 FUNCTION_BLOCK FB_MKS_937A
 VAR_IN_OUT
 
@@ -17,7 +34,7 @@ VAR_OUTPUT
     VG : ST_VG; // Vacuum Gauge Data Structure
 END_VAR
 VAR
-    rV	:	REAL;
+    rV	:	REAL; // Terminal voltage [V] of the 937A logarithmic pressure signal
         (*IOs to be linked*)
     /// Controls and I/Os
     i_iPRESS_R AT %I* :INT; // input Pressure // Link to analog Input
@@ -30,8 +47,11 @@ END_VAR
 (* 7-15-2015 *)
 (* This function will read the pressure from any gauge on a 937A. *)
 
-rV := 10*INT_TO_REAL(VG.i_iPRESS_R)/32767;
-VG.rPRESS := LREAL_TO_REAL(EXPT(10,rV/0.6-12));
+(* Terminal voltage [V] from the raw analog input counts (terminal span and full-scale count are
+   hardware properties, declared in GVL Constants) *)
+rV := gc_rMKS937AFullScaleVolts*INT_TO_REAL(VG.i_iPRESS_R)/gc_uiMKS937ATermBits;
+(* 937A logarithmic transfer function: pressure [Torr] from the terminal voltage *)
+VG.rPRESS := LREAL_TO_REAL(EXPT(gc_rMKS937ALogLawBase,rV/gc_rMKS937AVoltsPerDecade-gc_rMKS937AExponentOffset));
 
 
 (* Ion Gauge Protection Functions *)
@@ -53,15 +73,16 @@ END_IF
 
 
 (* Pressure gauge OK checks *)
-VG.xPRESS_OK := (rV <=9.6 ) AND (rV>=0.6); //legacy
+(* The validity windows are part of the 937A curve and are named in GVL Constants *)
+VG.xPRESS_OK := (rV <= gc_rMKS937AValidMaxVolts) AND (rV >= gc_rMKS937AValidMinVolts); //legacy
 
-IF (rV <=9.6 ) AND (rV>=0.6) THEN
+IF (rV <= gc_rMKS937AValidMaxVolts) AND (rV >= gc_rMKS937AValidMinVolts) THEN
     VG.eState := Valid; // normal
-ELSIF rV >= 0.18 AND rV <= 0.22 THEN
+ELSIF rV >= gc_rMKS937ALoBandMinVolts AND rV <= gc_rMKS937ALoBandMaxVolts THEN
     VG.eState := ValidLo; //LO
-ELSIF rV >= 9.7 AND rV<= 9.9 THEN
+ELSIF rV >= gc_rMKS937AHiBandMinVolts AND rV <= gc_rMKS937AHiBandMaxVolts THEN
     VG.eState := ValidHi; //HIGH
-ELSIF rV < 0.18 THEN
+ELSIF rV < gc_rMKS937ALoBandMinVolts THEN
     VG.eState := GaugeDisconnected; //not on
 ELSE
     VG.eState := PressInvalid; //other fault - could be no gauge, controller powering up etc

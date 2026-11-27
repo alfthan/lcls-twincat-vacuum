@@ -4,6 +4,32 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* MKS 937A ion gauge controller. The 937A outputs a 0..10 V logarithmic pressure signal that the
+       vacuum architecture reads on a bipolar analog input terminal, so its scaling is hardware
+       dependent: the terminal full-scale count, the terminal voltage span and the vendor transfer
+       function are declared here once, together with the validity windows that only make sense
+       against that same curve. A different terminal resolution, a re-ranged transmitter or a
+       corrected vendor curve is therefore a single edit in this list, shared by the conversion and
+       by the state evaluation of FB_MKS_937A. *)
+    gc_uiMKS937ATermBits      : UINT := 32767; // Full-scale raw count of the analog input terminal
+    gc_rMKS937AFullScaleVolts : REAL := 10.0;  // Terminal voltage [V] that corresponds to the full-scale raw count
+
+    (* 937A logarithmic transfer function, as per manual page 61:
+       P [Torr] = gc_rMKS937ALogLawBase ^ (V / gc_rMKS937AVoltsPerDecade - gc_rMKS937AExponentOffset) *)
+    gc_rMKS937ALogLawBase     : REAL := 10.0;  // Base of the logarithmic pressure curve
+    gc_rMKS937AVoltsPerDecade : REAL := 0.6;   // Curve slope [V/decade]
+    gc_rMKS937AExponentOffset : REAL := 12.0;  // Decades subtracted from the measured terminal voltage
+
+    (* 937A validity windows, in terminal volts: a reading inside the valid band is Valid, the two
+       narrow bands around it are ValidLo and ValidHi, and a reading below the ValidLo band is a
+       gauge that is switched off or disconnected. *)
+    gc_rMKS937AValidMinVolts  : REAL := 0.6;   // Lower edge of the valid band
+    gc_rMKS937AValidMaxVolts  : REAL := 9.6;   // Upper edge of the valid band (also the legacy xPRESS_OK limit)
+    gc_rMKS937ALoBandMinVolts : REAL := 0.18;  // Lower edge of the ValidLo band; below this the gauge counts as disconnected
+    gc_rMKS937ALoBandMaxVolts : REAL := 0.22;  // Upper edge of the ValidLo band
+    gc_rMKS937AHiBandMinVolts : REAL := 9.7;   // Lower edge of the ValidHi band
+    gc_rMKS937AHiBandMaxVolts : REAL := 9.9;   // Upper edge of the ValidHi band
 END_VAR
 ]]></Declaration>
   </GVL>
