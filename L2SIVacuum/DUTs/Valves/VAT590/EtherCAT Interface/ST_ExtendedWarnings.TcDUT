@@ -3,22 +3,25 @@
   <DUT Name="ST_ExtendedWarnings" Id="{e3b55802-b467-4309-b703-620150bf1489}">
     <Declaration><![CDATA[TYPE ST_ExtendedWarnings :
 STRUCT
-    Bit0RemoteControlNotPossible: BIT;
-    Bit1ControlModeSPNotAllowed : BIT;
-    Bit2ZeroDisabled : BIT;
-    Bit3PFODeactivated : BIT;
-    Bit4Reserved : BIT;
-    Bit5PressureSPOutOfRange : BIT;
-    Bit6PositionSPOutOfRange : BIT;
-    Bit7Reserved : BIT;
-    Bit8Reserved : BIT;
-    Bit9Reserved : BIT;
-    Bit10CtrlSPOutOfRange : BIT;
-    Bit11GeneralCtrlSPOutOfRange : BIT;
-    Bit12ProcDataSettingsNotvalid : BIT;
-    Bit13Reserved5 : BIT;
-    Bit14Reserved6 : BIT;
-    Bit15Reserved7 : BIT;
+    (*Extended warnings readback from the VAT590 EtherCAT interface process data.*)
+    (*Every member is a single flag: TRUE = the condition/warning is present, *)
+    (*FALSE = it is not. Members marked reserved are vendor-reserved.        *)
+    Bit0RemoteControlNotPossible: BIT; // Remote control not possible: valve refuses remote commands (e.g. local control active)
+    Bit1ControlModeSPNotAllowed : BIT; // Requested control mode setpoint not allowed by the valve in its current state
+    Bit2ZeroDisabled : BIT; // Zeroing (zero-point/offset adjustment) disabled: valve will not execute a zero command
+    Bit3PFODeactivated : BIT; // Power Failure Option (PFO) deactivated: defined power-failure behaviour is switched off
+    Bit4Reserved : BIT; // Reserved (vendor): not defined by the interface, not evaluated by this project - ignore
+    Bit5PressureSPOutOfRange : BIT; // Requested pressure setpoint outside the pressure range accepted by the valve
+    Bit6PositionSPOutOfRange : BIT; // Requested position setpoint outside the position range accepted by the valve
+    Bit7Reserved : BIT; // Reserved (vendor): not defined by the interface, not evaluated by this project - ignore
+    Bit8Reserved : BIT; // Reserved (vendor): not defined by the interface, not evaluated by this project - ignore
+    Bit9Reserved : BIT; // Reserved (vendor): not defined by the interface, not evaluated by this project - ignore
+    Bit10CtrlSPOutOfRange : BIT; // Control setpoint (PID control mode) outside the control range accepted by the valve
+    Bit11GeneralCtrlSPOutOfRange : BIT; // General control setpoint outside the control range accepted by the valve
+    Bit12ProcDataSettingsNotvalid : BIT; // Process data (PDO) settings not valid: configuration rejected by the valve
+    Bit13Reserved5 : BIT; // Reserved (vendor, bit13): not evaluated by this project - ignore
+    Bit14Reserved6 : BIT; // Reserved (vendor, bit14): not evaluated by this project - ignore
+    Bit15Reserved7 : BIT; // Reserved (vendor, bit15): not evaluated by this project - ignore
 END_STRUCT
 END_TYPE
 ]]></Declaration>
