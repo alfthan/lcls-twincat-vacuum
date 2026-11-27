@@ -1,8 +1,18 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_CMR362" Id="{829c6b91-5e76-4127-a78c-3990b7df60a3}" SpecialFunc="None">
-    <Declaration><![CDATA[(* For Pfeiffer CMR 362 *)
-FUNCTION_BLOCK FB_CMR362
+    <Declaration><![CDATA[(* FB_CMR362 - Pfeiffer CMR 362 compact full-range gauge readout.
+   Purpose    : convert the raw analog input into Torr, classify the gauge state
+                (ValidLo / Valid / OoR / GaugeDisconnected) and publish ST_VG.
+   Usage      : instantiate once per CMR 362 gauge, call M_SetBits() with the
+                analog terminal's full-scale count and link i_iPRESS_R to the
+                analog input.
+   Objectives : all diagnostics are reported through the shared LCLSGeneral
+                logger inherited from FB_GaugeBase (ACT_Logger), and only when
+                the gauge state changes so the log stays quiet per cycle.
+   History    : 2026-11-27 - report gauge state transitions through the shared
+                logger instead of leaving them unreported. *)
+FUNCTION_BLOCK FB_CMR362 EXTENDS FB_GaugeBase
 VAR_INPUT
 END_VAR
 VAR_OUTPUT
@@ -52,6 +62,9 @@ END_IF
 (* Pressure OK check *)
 PG.xPRESS_OK := (PG.rPRESS >= MinPressure);
 
+(* Diagnostics: structured event on a gauge state transition only *)
+ACT_Logger();
+
 (*Soft IO Mapping*)
 ACT_IO();
 
@@ -60,6 +73,36 @@ ACT_IO();
     <Action Name="ACT_IO" Id="{f7bdedec-d365-42ba-8021-29225073f9cd}">
       <Implementation>
         <ST><![CDATA[PG.i_iPRESS_R :=i_iPRESS_R;]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="ACT_Logger" Id="{c82857f6-fe39-45f9-bdcc-d7034ff2e453}">
+      <Implementation>
+        <ST><![CDATA[(* Report gauge diagnostics through the shared logger.
+   fbLogger (FB_LogMessage, subsystem VACUUM) and ePrevState are inherited from
+   FB_GaugeBase, so these events reach the existing LCLSGeneral diagnostics
+   consumers. A structured event is emitted only when PG.eState changes, never
+   once per cycle. Per-gauge reporting is gated by ST_VG.xLog (LOGGER PV). *)
+IF PG.xLog THEN
+    IF ePrevState <> PG.eState THEN
+        CASE PG.eState OF
+            ValidHi:
+                fbLogger(sMsg:='Gauge pressure valid high.', eSevr:=TcEventSeverity.Info);
+            ValidLo:
+                fbLogger(sMsg:='Gauge pressure valid low.', eSevr:=TcEventSeverity.Info);
+            Valid:
+                fbLogger(sMsg:='Gauge pressure valid.', eSevr:=TcEventSeverity.Info);
+            GaugeDisconnected:
+                fbLogger(sMsg:='Gauge Disconnected.', eSevr:=TcEventSeverity.Critical);
+            PressInvalid:
+                fbLogger(sMsg:='Gauge pressure invalid.', eSevr:=TcEventSeverity.Warning);
+            OoR:
+                fbLogger(sMsg:='Gauge pressure out of range.', eSevr:=TcEventSeverity.Warning);
+            Starting:
+                fbLogger(sMsg:='Gauge starting.', eSevr:=TcEventSeverity.Info);
+        END_CASE
+        ePrevState := PG.eState;
+    END_IF
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Method Name="M_SetBits" Id="{945a4b7c-0383-4407-a003-10a045f5720a}">
