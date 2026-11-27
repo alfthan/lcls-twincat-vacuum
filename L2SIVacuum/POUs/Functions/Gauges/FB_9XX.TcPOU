@@ -3,6 +3,8 @@
   <POU Name="FB_9XX" Id="{2b25be69-d890-49a3-9eed-41a1523a8d75}" SpecialFunc="None">
     <Declaration><![CDATA[(* Standard MKS 9XX series conversion *)
 (* works for 925 *)
+(* P [Torr] = 10^(rV - 6) with rV the terminal voltage in V. The terminal full-scale count, *)
+(* the full-scale voltage and the logarithmic transfer constants are declared once in GVL Constants. *)
 FUNCTION_BLOCK FB_9XX EXTENDS FB_GaugeBase
 VAR_INPUT
 END_VAR
@@ -15,13 +17,14 @@ END_VAR
 VAR_IN_OUT
 END_VAR
 VAR
-    rV : REAL;
+    rV : REAL; // Terminal voltage [V], scaled from the raw analog input counts
     fbGaugeState : FB_PressureState;
     rMaxPressure	:	REAL := 760; //Torr
     rMinPressure	:	REAL := 1E-5; //Torr
-    rVMin : REAL:= 0.9;
+    rVMin : REAL:= 0.9; // Lowest voltage [V] that still carries a valid pressure reading
+    rPressureMin : REAL; // Pressure floor of the conversion: rMinPressure clamped against rMaxPressure
 
-    iTermBits: UINT := 30518 ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
+    iTermBits: UINT := gc_iTermBitsEL3174 ; // The terminal's maximum value in bits default el3174 as per vacuum architecture
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
 END_VAR
@@ -41,15 +44,15 @@ IF PG.rVAC_SP = 0 THEN
     PG.rVAC_SP := rDefaultVAC_SP;
 END_IF
 // check no div by zero
-If (iTermBits=0) THEN iTermBits := 30518;END_IF
-rV := 10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
+If (iTermBits=0) THEN iTermBits := gc_iTermBitsEL3174;END_IF
+rV := gc_rTermFullScaleVoltage*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
+
+// Pressure floor of the conversion, never allowed above the configured maximum
+rPressureMin := MIN(rMinPressure, rMaxPressure);
 
 IF rV >=rVMin THEN
-    IF rV >= rVMin AND rV <= 1 THEN
-        PG.rPRESS := 1E-5;
-    ELSE
-        PG.rPRESS := LREAL_TO_REAL(EXPT(10, rV-6));
-    END_IF
+    // Logarithmic transfer function, floored at the block's configured minimum pressure
+    PG.rPRESS := MAX(rPressureMin, LREAL_TO_REAL(EXPT(gc_lr9XXLogBase, rV - gc_lr9XXLogDecadeOffset)));
     PG.xPRESS_OK := TRUE;
     PG.eState := Valid;
 ELSE

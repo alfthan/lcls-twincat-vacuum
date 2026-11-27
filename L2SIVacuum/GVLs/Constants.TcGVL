@@ -4,6 +4,14 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Analog input terminal scaling: counts reported at full scale and the voltage that full scale represents *)
+    gc_iTermBitsEL3174 : UINT := 30518; // EL3174 / EL3174-xxxx, 10 V terminal as per the vacuum architecture
+    gc_rTermFullScaleVoltage : REAL := 10.0; // Voltage [V] that corresponds to the terminal's full-scale count
+
+    (* Logarithmic transfer function of the MKS 9XX series: P [Torr] = 10^(V - 6) *)
+    gc_lr9XXLogBase : LREAL := 10.0; // Base of the logarithmic transfer function
+    gc_lr9XXLogDecadeOffset : LREAL := 6.0; // Decade offset, such that 1 V corresponds to 1E-5 Torr
 END_VAR
 ]]></Declaration>
   </GVL>
