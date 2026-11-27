@@ -1,12 +1,61 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject>
   <DUT Name="IO_GCC" Id="{99df1f4e-2c23-47ef-9581-42fe333e225e}">
-    <Declaration><![CDATA[TYPE IO_GCC :
+    <Declaration><![CDATA[(*
+    IO_GCC
+
+    Purpose:
+        I/O image of one vacuum gauge controller (GCC): the four fieldbus signals a
+        gauge controller occupies on its EtherCAT terminals, kept in one structure so
+        the hardware mapping of a controller can be described in a single place
+        instead of as four separate AT %I* / %Q* declarations on a function block.
+
+    Usage:
+        Not instantiated anywhere in this repository: no POU references IO_GCC and
+        the DUT is not listed in L2SIVacuum.plcproj, so it is not compiled today.
+        It mirrors the per-signal declarations of the live gauge blocks - FB_CCM501,
+        FB_MKS500, FB_IMG401, FB_MKS355 and FB_MX7M declare the same four signals
+        individually, each with its own TcLinkTo comment. A user of this struct links
+        the members through TcLinkTo attributes (as ST_VG does) rather than by
+        absolute address.
+
+    Objectives:
+        - State, per member, the terminal type, the signal direction, the meaning and
+          the engineering units, so a raw ADC count is never read as a pressure.
+        - State the polarity and safe state of the HV-enable output and of the two
+          discrete status inputs, so the gauge state logic can be followed from the
+          declaration alone.
+
+    History:
+        2018-10-12 / Maggie        First release of the L2SIVacuum library.
+        2025-08-22 / ysmandza      ProductVersion removed from the project files.
+        2026-11-27 / Scirix Agent  Added this header and an inline comment on every
+                                   member (audit finding #1174, convention
+                                   conv_321640e095c0). Comments only: no declaration,
+                                   type, member order or behaviour change.
+*)
+TYPE IO_GCC :
 STRUCT
-    i_aPRESS: INT; //EL3174 or EP3174
-    q_xHVE : BOOL; //EL2624  or EP2624
-    i_xHV_ON : BOOL; //EL1124
-    i_xDisc_Status : BOOL;	//EL1124
+    i_aPRESS: INT; // Analog pressure output of the gauge controller: EL3174 (or EP3174)
+                   // analog input, signed 16-bit ADC counts - NOT a pressure. The gauge
+                   // blocks convert to volts as 10.0 * i_aPRESS / iTermBits (EL3174 full
+                   // scale = 30518 counts, see FB_CCM501) and then to Torr through the
+                   // controller's V -> pressure curve.
+    q_xHVE : BOOL; // High-voltage enable to the gauge controller: EL2624 (or EP2624)
+                   // relay output. TRUE = HV enable asserted, the controller may run its
+                   // ion gauge; FALSE = HV disabled, the de-energized safe state and the
+                   // value a gauge block drives whenever the gauge is off or faulted.
+                   // Same signal the gauge blocks call q_xHV_DIS.
+    i_xHV_ON : BOOL; // High-voltage-on status from the gauge controller: EL1124 digital
+                     // input. TRUE = the controller reports its HV supply on, FALSE = HV
+                     // off. Read together with q_xHVE it separates "gauge disconnected"
+                     // (HV off although enabled) from "gauge running" in FB_CCM501 and
+                     // FB_MKS500.
+    i_xDisc_Status : BOOL; // Discharge-current status from the gauge controller: EL1124
+                           // digital input. TRUE = discharge current flowing, i.e. the cold
+                           // cathode is ignited and measuring; FALSE = no discharge.
+                           // FB_MKS500 reads "HV on without discharge" as starting and
+                           // "HV on with discharge" as valid.
 END_STRUCT
 END_TYPE
 ]]></Declaration>
