@@ -12,21 +12,21 @@ STRUCT
     field: ZNAM OPEN;
     io: io ;
     '}
-    pv_xCLS_SW	: BOOL;
+    pv_xCLS_SW	: BOOL; (* Close request: TRUE requests CLOSE, FALSE requests OPEN. Dimensionless (BOOL) *)
     {attribute 'pytmc' := '
     pv: FORCE_CLS;
     field: ZNAM FALSE;
     field: ONAM FORCE CLOSE;
     io: io;
     '}
-    pv_xOvrdCls	:	BOOL;
+    pv_xOvrdCls	:	BOOL; (* Force close override request: TRUE = request override, honoured only while xOverrideMode is TRUE. Dimensionless (BOOL) *)
     {attribute 'pytmc' := '
     pv: CLS_OK;
     field: ZNAM FALSE;
     field: ONAM CLS_OK;
     io: i;
     '}
-    xCLS_OK	: BOOL;
+    xCLS_OK	: BOOL; (* Close permission: TRUE = close interlocks satisfied, valve may close; FALSE = permission denied, valve is driven open. Dimensionless (BOOL) *)
 
     {attribute 'pytmc' := '
     pv: OVRD_ON;
@@ -43,7 +43,7 @@ STRUCT
     field: ONAM TRUE;
     io: i;
     '}
-    xCLS_DO	: BOOL;
+    xCLS_DO	: BOOL; (* Close output: TRUE = valve commanded CLOSED, FALSE = valve OPEN. Dimensionless (BOOL) *)
 
 END_STRUCT
 END_TYPE]]></Declaration>
