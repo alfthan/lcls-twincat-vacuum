@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_PTM" Id="{4cff5a41-fc78-4938-9468-a980c788ccb5}">
     <Declaration><![CDATA[TYPE ST_PTM :
@@ -17,7 +17,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: ONAM RUN;
     io: io;
     '}
-    xRunSW	:	BOOL;
+    xRunSW	:	BOOL; // Run/stop command switch; TRUE = run commanded, FALSE = stop commanded
     {attribute 'pytmc' := '
     pv: RST_SW;
     field: ZNAM FALSE;
@@ -29,7 +29,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     pv: RUN_DO;
     io: i;
     '}
-    q_RunDO 	:	BOOL;
+    q_RunDO 	:	BOOL; // Physical run command to the pump; TRUE = run asserted
 
 (* Readbacks *)
     {attribute 'pytmc' := '
@@ -45,20 +45,20 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: ONAM TRUE;
     io: i;
     '}
-    i_xAccel	:	BOOL;
+    i_xAccel	:	BOOL; // Pump readback: TRUE while the pump is accelerating to its speed setpoint
     {attribute 'pytmc' := '
     pv: AT_SPD;
     field: ZNAM FALSE;
     field: ONAM AT SPEED;
     io: i;
     '}
-    i_xAtSpd	:	BOOL;
+    i_xAtSpd	:	BOOL; // Pump readback: TRUE when the pump has reached its rotation speed setpoint
     {attribute 'pytmc' := '
     pv: SPEED;
     io: i;
     field: EGU "Hz"
     '}
-    i_diCurSpd	:	DINT;
+    i_diCurSpd	:	DINT; // Pump readback: current rotation speed [Hz]
 
     xCommTimeout	:	BOOL := TRUE;  (* Initialized true since we haven't talked to pump yet *)
 (* Alarm Outputs *)
@@ -89,7 +89,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     iPumpGrp 	:	INT; // all members of a pump group start at the same time
 
 (* Operational Setpoints *)
-    rForelineSP	:	REAL := 0.5;
+    rForelineSP	:	REAL := 0.5; // Foreline pressure setpoint [Torr]; compared against the backing pressure
 
     {attribute 'pytmc' := '
     pv: BP_SP;
@@ -100,7 +100,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rBackingPressureSP : REAL := 0.01;
+    rBackingPressureSP : REAL := 0.01; // Backing pressure setpoint [Torr]
     {attribute 'pytmc' := '
     pv: IP_SP;
     io: io;
@@ -110,7 +110,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rInletPressureSP : REAL := 0.02; //20mTorr
+    rInletPressureSP : REAL := 0.02; // Inlet pressure setpoint [Torr] (0.02 Torr = 20 mTorr)
 (*State*)
     {attribute 'pytmc' := '
     pv: STATE;
@@ -122,7 +122,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     io: i;
     '}
 
-    eState	:	E_PumpState;
+    eState	:	E_PumpState; // Current pump state of the state machine (see E_PumpState)
 
     {attribute 'pytmc' := '
     pv: CURR_MON;
@@ -130,7 +130,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: PREC 2
     field: EGU "A";
     '}
-    i_rCurrentMon : REAL;
+    i_rCurrentMon : REAL; // Pump readback: motor current [A]
 
     {attribute 'pytmc' := '
     pv: TEMP_MON;
@@ -138,7 +138,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: PREC 2;
     field: EGU "C";
     '}
-    i_rTempMon	:	REAL;
+    i_rTempMon	:	REAL; // Pump readback: pump temperature [degC]
 
     {attribute 'pytmc' := '
     pv: LOGGER;
@@ -146,7 +146,7 @@ NOTE: This is an archetype, use an extension of this structure for a specific pu
     field: ZNAM OFF ;
     field: ONAM ON ;
     '}
-    xLog : BOOL:=TRUE;
+    xLog : BOOL:=TRUE; // Enable state-change logging for this pump; TRUE = log
 
 
 END_STRUCT
