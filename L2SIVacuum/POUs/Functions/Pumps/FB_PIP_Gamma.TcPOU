@@ -2,7 +2,17 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PIP_Gamma" Id="{c735b214-fb8d-491c-9d35-e2f8609cfbf0}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the ION pump connected to a Gamma QPCe controller.
- Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr *)
+ Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr.
+
+ HV enable policy (conv_eeb5d87743fc - an override never bypasses a safety interlock):
+ - The HV output is the start request AND the interlock permit. The permit is
+   i_stGauge.xPRESS_OK AND i_stGauge.rPRESS <= stPump.rHVEna_SP and it is the only
+   condition that can energize HV.
+ - The manual override (i_xOverrideMode together with ST_PIP.pv_xOvrdStart / FORCE_START) is
+   time-qualified (tonOvrd, tOvrd) and self-clearing; it only requests a start and is ANDed
+   with the permit, so it cannot energize HV while the interlock is not satisfied.
+ - An override request refused by the interlock is logged and the HV output stays off.
+ History: 2026-11-27 Scirix agent (task #35) - override removed from the HV enable path. *)
 {attribute 'reflection'}
 FUNCTION_BLOCK FB_PIP_Gamma Extends FB_Pump
 VAR_INPUT
@@ -40,6 +50,10 @@ stateTimer:TON;
     tonDelOK : TON;
     rtOK	:	R_TRIG;
     tOvrd	:	TIME := T#10s;
+    xILKPermit : BOOL;   // Interlock permit: gauge valid AND press at/below rHVEna_SP. The only HV permit
+    xOvrdRequest : BOOL; // Qualified manual override request (tonOvrd.Q AND i_xOverrideMode). A start request only
+    xStartCmd : BOOL;    // HV start request: the HV_SW command OR a qualified override request
+    tOvrdDenied : R_TRIG;// Rising edge of an override request the interlock refuses, for one-shot logging
 
     {attribute 'instance-path'}
     {attribute 'noinit'}
@@ -70,9 +84,21 @@ END_IF
 (* Interlock *)
 //stPump.xHV_ExtIlk  := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= stPump.rHVEna_SP);//AND NOT tPumpStartTimeout.Q); //ADP
 
-(* Enable HV *)
-IF i_stGauge.rPRESS <= stPump.rHVEna_SP AND i_stGauge.xPRESS_OK THEN
-    stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
+(* Interlock permit. This is the ONLY condition under which the HV output may be energized:
+   the interlock gauge must be valid and at/below the HV enable setpoint. *)
+xILKPermit := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= stPump.rHVEna_SP);
+
+(* Qualified manual override request. Time-qualified by tonOvrd and self-cleared by tOvrd in
+   ACT_IlkOverride. It is only a start request and never replaces the permit above, so an
+   override can never energize HV while the vacuum interlock is not satisfied. *)
+xOvrdRequest := tonOvrd.Q AND i_xOverrideMode;
+
+(* HV start request: the EPICS HV_SW command or a qualified override request *)
+xStartCmd := stPump.xHVEna_SW OR xOvrdRequest;
+
+(* Enable HV - the start request is always ANDed with the interlock permit *)
+IF xILKPermit THEN
+    stPump.q_xHVEna_DO := xStartCmd;
     stPump.xILKOk:= TRUE;
 ELSIF stPump.q_xHVEna_DO (*AND timer.Q*) THEN
     IF q_IG.rPRESS > (stPump.rHVEna_SP + stPump.rHYS_PR) THEN // Ion pumps when running switches off based on their own pressure readings
@@ -80,10 +106,10 @@ ELSIF stPump.q_xHVEna_DO (*AND timer.Q*) THEN
         stPump.xHVEna_SW := FALSE;
         stPump.xILKOk := FALSE;
     ELSE
-        stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
+        (* Protection hysteresis while running: HV is held on the software run command only.
+           The manual override is deliberately not part of this path. *)
+        stPump.q_xHVEna_DO := stPump.xHVEna_SW;
     END_IF
-ELSIF (tonOvrd.Q AND i_xOverrideMode) THEN
-    stPump.q_xHVEna_DO := TRUE;
 ELSE
     stPump.q_xHVEna_DO  := FALSE;
     stPump.xHVEna_SW := FALSE;
@@ -137,7 +163,9 @@ ACT_Recover();]]></ST>
         <ST><![CDATA[(* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the Pump permission goes true for more than ten seconds consistently, remove override
+when the Pump permission goes true for more than ten seconds consistently, remove override.
+The override is only a start *request*: it is ANDed with the interlock permit in the body and
+can never energize HV on its own, so it can never bypass the vacuum interlock.
 *)
 
 tonDelOK(IN:=stPump.xILKOk, PT:=T#10S);
@@ -152,6 +180,11 @@ END_IF
 IF NOT(i_xOverrideMode) THEN stPump.pv_xOvrdStart :=FALSE; END_IF
 //Override timer
 tonOvrd(IN:= stPump.pv_xOvrdStart, PT:=tOvrd);
+//Log an override request that the interlock refuses: the override never replaces the permit
+tOvrdDenied(CLK:= (tonOvrd.Q AND i_xOverrideMode) AND NOT stPump.xILKOk);
+IF tOvrdDenied.Q THEN
+    fbLogger(sMsg:='Override start request refused, vacuum interlock not satisfied, HV stays off.', eSevr:=TcEventSeverity.Warning);
+END_IF
 ]]></ST>
       </Implementation>
     </Action>
