@@ -14,6 +14,7 @@ VAR_INPUT
     i_rMaxBackingPressure : REAL := 3;
     i_iMinSpeed : DINT := 100; //Hz check pump manual for setting P43
     i_iMaxSpeed : DINT := 560; //Hz check pump manual for setting P43
+    i_tStartTimeOut : TIME := T#10M; //Start/at-speed watchdog: max time from a start command to i_xAtSpd
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -26,6 +27,7 @@ VAR
     RTRIG_INLK: R_TRIG;
     TOF_RESET: TON :=(PT:=T#1S);
     TOF_SetSpeed: TON :=(PT:=T#1S);
+    tStartTimeOut : TON; //Times the wait for i_xAtSpd after a start command
 
     (*IO*)
     (*inputs*)
@@ -51,6 +53,8 @@ END_VAR]]></Declaration>
       <ST><![CDATA[(* Ebara ETC control FB
 Scott Stubbs & Alex W.
 Modified Nov 2018 by M. Ghaly
+Modified 2026-11-27 (audit remediation): added a start/at-speed watchdog that latches a fault
+with an explicit message when the pump does not reach at-speed within i_tStartTimeOut.
 *)
 (* The pump runs when the RunDO is set to true. The RunDO sets the outputs Start and Stop to true when it
 is true, and false otherwise. Per the manual, when START bit is closed the pump will accelerate, and when the STOP
@@ -71,7 +75,7 @@ IF iq_stPTM.i_xOverride THEN
         iq_stPTM.q_RunDO:=FALSE;
     END_IF
     //Handle faults
-ELSIF iq_stPTM.i_xFault OR ( NOT iq_stPTM.xExtRunOk) THEN
+ELSIF iq_stPTM.i_xFault OR iq_stPTM.xPumpFaultLock OR ( NOT iq_stPTM.xExtRunOk) THEN
     iq_stPTM.q_RunDO:=FALSE;
     iq_stPTM.xRunSW:=FALSE;
     //And one for when we need to start the pump normally. Only allows pump to be started if ILK ok.
@@ -102,6 +106,11 @@ iq_stPTM.q_xStop := iq_stPTM.q_RunDO;
     iq_stPTM.q_xReset:= FALSE;
     iq_stPTM.xResetSW := FALSE;
  END_IF
+ (*Clear the latched start/at-speed fault when a reset is requested*)
+ IF iq_stPTM.xResetSW THEN
+    iq_stPTM.xPumpFaultLock := FALSE;
+    iq_stPTM.sError := '';
+ END_IF
  (*When the Protection signal is lost, Error bit doesn't show, but the controller still needs to be reset*)
 RTRIG_INLK(CLK:= iq_stPTM.q_xProtection );
  IF (RTRIG_INLK.Q) AND (iq_stPTM.i_xNCFault) THEN
@@ -114,8 +123,22 @@ RTRIG_INLK(CLK:= iq_stPTM.q_xProtection );
 iq_stPtm.rBackingPressureSP := BackingPressureSetPoint(iq_stPtm.rBackingPressureSP,i_rMaxBackingPressure);
 
 
- (*Pump STATE*)
-IF iq_stPtm.i_xFault THEN
+ (*Start/at-speed watchdog: a start command must reach i_xAtSpd within i_tStartTimeOut.
+  A pump that never reaches speed raises a latched fault instead of waiting indefinitely.*)
+ tStartTimeOut(IN:= iq_stPTM.q_RunDO AND NOT iq_stPTM.i_xAtSpd
+                   AND NOT iq_stPTM.i_xFault AND NOT iq_stPTM.xPumpFaultLock,
+                PT:= i_tStartTimeOut);
+IF tStartTimeOut.Q THEN
+    iq_stPTM.xPumpFaultLock := TRUE;
+    iq_stPTM.xRunSW := FALSE;
+    iq_stPTM.q_RunDO := FALSE;
+    iq_stPTM.q_xStart := FALSE;
+    iq_stPTM.q_xStop := FALSE;
+    iq_stPTM.sError := 'Pump start/at-speed timeout: at-speed not present while commanded to run.';
+END_IF
+
+(*Pump STATE*)
+IF iq_stPtm.i_xFault OR iq_stPtm.xPumpFaultLock THEN
     iq_stPtm.eState := pumpFAULT;
 ELSIF iq_stPTM.i_xDecel AND NOT iq_stPtm.q_RunDO THEN
     iq_stPtm.eState := pumpSTOPPING;
@@ -199,6 +222,10 @@ IF ePrevState <> iq_stPTM.eState THEN
       ePrevState := iq_stPTM.eState;
   END_IF
 
+
+// Log latched faults (for example the start/at-speed timeout) with their explicit message
+tErrorPresent(CLK:= iq_stPTM.xPumpFaultLock);
+IF tErrorPresent.Q THEN fbLogger(sMsg:= iq_stPTM.sError, eSevr:=TcEventSeverity.Critical); END_IF
 
 // Log FAULT
 tFault(CLK:= iq_stPTM.i_xNCFault);

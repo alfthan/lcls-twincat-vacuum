@@ -80,6 +80,20 @@ i_xDecel  : BOOL; //If closed, brake engaged (pump decelerating)
     '}
 i_xNCFault  : BOOL; //Normally closed fault wiring. If false, there is a fault, or cable is unplugged.
 
+(*Latched faults*)
+    {attribute 'pytmc' := '
+    pv: FAULT_LOCK
+    field: ZNAM FALSE;
+    field: ONAM TRUE;
+    io: i
+    '}
+xPumpFaultLock : BOOL := FALSE; //Latched fault: a commanded start did not reach at-speed within i_tStartTimeOut. Cleared by RESET.
+    {attribute 'pytmc' := '
+    pv: ERROR_MSG
+    io: i
+    '}
+sError : STRING; //Explicit message describing the latched fault
+
 
 
 END_STRUCT
