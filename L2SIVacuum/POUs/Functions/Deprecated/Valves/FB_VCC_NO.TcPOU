@@ -4,6 +4,26 @@
     <Declaration><![CDATA[(*Deprecated*)
 (* This Function Block Implements Basic Functionality for NO Vent Valves VVC *)
 (* Note Interlock Logic is External *)
+(* Override policy (conv_eeb5d87743fc - a manual override is time-qualified, self-clearing and never a bypass of safety interlocks):
+   - The close override (ST_VCC_NO.pv_xOvrdCls / FORCE_CLS) is honoured only while the plant-wide override mode
+     (i_xOverrideMode) is enabled and only after the request has been held continuously for the qualification time tOvrd.
+   - The override never bypasses the close permission iq_stValve.xCLS_OK: the permit term stays in series with the
+     override term of the close command, so a lost permission still de-energizes (opens) the valve.
+   - The override clears itself automatically when either
+       1) the safe condition is restored - the close permission iq_stValve.xCLS_OK has been continuously true for tOvrd
+          (tonDelOK / rtOK), or
+       2) the configured maximum duration has elapsed - it has been active (qualified request AND override mode enabled)
+          for tOvrdMaxDuration (tonOvrdMax). This clear is unconditional: it does not depend on the permission ever
+          returning, which is what previously kept pv_xOvrdCls set indefinitely when the valve was held by the very
+          condition the override was meant to defeat.
+     The duration expiry is reported at Warning severity through the shared logger and resets the retained operator
+     request ST_VCC_NO.pv_xOvrdCls to FALSE.
+   - A retained request is also released while the plant-wide override mode is disabled, so a stale FORCE_CLS cannot take
+     effect later when the mode is enabled for an unrelated reason.
+*)
+(* History: 2026-11-27 Scirix agent (task #319) - added the unconditional maximum override duration
+          (tonOvrdMax/tOvrdMaxDuration), released a retained request while the override mode is disabled and kept the
+          close permission in series with the override term. Timing values are named parameters instead of literals. *)
 {attribute 'obsolete' := 'FB_VCC_NO has been deprecated and is not valid!'}
 FUNCTION_BLOCK FB_VCC_NO
 VAR_IN_OUT
@@ -20,9 +40,15 @@ VAR_OUTPUT
 END_VAR
 VAR
 
-    tonOvrd	:	TON;
-    tonDelOK : TON;
-    rtOK	:	R_TRIG;
+    (* Shared logger: the override self-clearing events are reported through it (conv_5bf2e4825d84) *)
+    fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.VACUUM);
+    tonOvrd : TON;                    (* Override qualification timer: the override is honoured only after tOvrd of continuous request *)
+    tonDelOK : TON;                   (* Close-permission debounce: TRUE once iq_stValve.xCLS_OK has been continuously true for tOvrd *)
+    rtOK : R_TRIG;                    (* Rising edge of tonDelOK.Q: fires once when the close permission has been restored for tOvrd *)
+    tOvrd : TIME := T#10S;            (* Override qualification time, also used as the debounce time of the safe-condition reset *)
+    tonOvrdMax : TON;                 (* Override duration timer: runs while the override is active and expires it after tOvrdMaxDuration *)
+    tOvrdMaxDuration : TIME := T#30M; (* Configured maximum duration an active close override may stay on before it is cleared automatically *)
+    xOvrdActive : BOOL;               (* TRUE while the override is actually in effect (qualified request AND plant-wide override mode enabled) *)
     (*IO*)
     xCLS_DO	AT%Q*: BOOL;
 
@@ -35,19 +61,41 @@ END_IF
 
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
-Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+Solution: Override only after the request has been held for tOvrd (protects against blips), and the override is
+never allowed to stay on indefinitely: it clears itself when the close permission has been restored for tOvrd,
+or when it has been active for the configured maximum duration tOvrdMaxDuration.
 *)
 
-tonDelOK(IN:=iq_stValve.xCLS_OK, PT:=T#10S);
+(* Safe-condition reset: once the close permission has been continuously true for tOvrd the override is no longer
+   needed and the retained operator request is dropped. *)
+tonDelOK(IN:=iq_stValve.xCLS_OK, PT:=tOvrd);
 rtOK(CLK:=tonDelOK.Q);
 IF rtOK.Q THEN iq_stValve.pv_xOvrdCls :=FALSE; END_IF
 
-//Override timer
-tonOvrd(IN:=iq_stValve.pv_xOvrdCls, PT:=T#10S);
+(* Release the retained override request while the plant-wide override mode is disabled, so a stale request
+   cannot take effect later when the mode is enabled for an unrelated reason. *)
+IF NOT i_xOverrideMode THEN
+iq_stValve.pv_xOvrdCls := FALSE;
+END_IF
 
-(* Here's where the valve is closed *)
-iq_stValve.xCLS_DO := (iq_stValve.pv_xCLS_SW AND iq_stValve.xCLS_OK) OR (tonOvrd.Q AND i_xOverrideMode);]]></ST>
+//Override qualification timer: the request must persist for tOvrd before it is honoured
+tonOvrd(IN:=iq_stValve.pv_xOvrdCls, PT:=tOvrd);
+
+(* Maximum override duration. A manual override must not stay active indefinitely: the timer runs while the override
+   is actually in effect (qualified request AND plant-wide override mode enabled) and clears the retained operator
+   request once tOvrdMaxDuration has elapsed. This clear is unconditional: it does not depend on the close permission
+   ever returning, so an override can no longer stay latched because the valve is held by the condition it defeated. *)
+xOvrdActive := tonOvrd.Q AND i_xOverrideMode;
+tonOvrdMax(IN:=xOvrdActive, PT:=tOvrdMaxDuration);
+IF tonOvrdMax.Q AND iq_stValve.pv_xOvrdCls THEN
+iq_stValve.pv_xOvrdCls := FALSE;
+//Log
+fbLogger(sMsg:='Close override cleared: maximum override duration elapsed', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+(* Here's where the valve is closed. The override is gated by the close permission: it may drop the operator request
+   (pv_xCLS_SW), but it never bypasses the permission/interlock term. *)
+iq_stValve.xCLS_DO := (iq_stValve.pv_xCLS_SW AND iq_stValve.xCLS_OK) OR (tonOvrd.Q AND i_xOverrideMode AND iq_stValve.xCLS_OK);]]></ST>
     </Implementation>
     <Action Name="ACT_IO" Id="{c25df29b-6cf5-4052-842b-22ecdcba8c16}">
       <Implementation>
