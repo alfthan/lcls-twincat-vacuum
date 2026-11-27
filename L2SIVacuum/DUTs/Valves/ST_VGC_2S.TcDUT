@@ -23,7 +23,7 @@ STRUCT
     autosave_pass1: VAL DESC
     '}
     rAT_VAC_HYS_DS	:	REAL :=0.000001;	// Hysteresis of the vacuum sp downstream
-    rAT_VAC_SP_LAST_DS :	REAL :=0.000001 ;
+    rAT_VAC_SP_LAST_DS :	REAL :=0.000001 ;	// Last downstream AT_VAC interlock setpoint (TORR), cached to detect setpoint changes
 END_STRUCT
 END_TYPE]]></Declaration>
   </DUT>
