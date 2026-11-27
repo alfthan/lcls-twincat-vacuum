@@ -4,6 +4,15 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    (* Hardware/communication parameters of the legacy Koyo PLC Modbus gauge interface
+       (FB_GaugeModbus). Declared here instead of being embedded as literals in the
+       function block logic so they can be reviewed and changed in one place. *)
+    gc_nModbusTCPPort : UINT := 502; // Modbus TCP port the legacy PLC listens on
+    gc_nModbusReadQty : UINT := 32; // Input bits read per poll; physical bit span of FB_GaugeModbus.i_PLC_nBits (4 bytes)
+    gc_tModbusRetryPeriod : TIME := T#10S; // Period after which a read that did not complete is re-issued
+    gc_rModbusNoReadingPRESS : REAL := 1E-8; // Pressure [Torr] published when no valid gauge reading is available
+    gc_iModbusBitsPerByte : INT := 8; // Bits per byte; used to split a bit offset into byte index and bit number
+    gc_iModbusMaxBitOffset : INT := 31; // Highest valid bit offset inside the read image (gc_nModbusReadQty - 1)
 END_VAR
 ]]></Declaration>
   </GVL>

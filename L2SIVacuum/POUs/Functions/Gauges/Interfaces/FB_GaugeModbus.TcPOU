@@ -1,11 +1,23 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_GaugeModbus" Id="{a3fde534-3e0e-4f6e-ae05-bc79ebe7e08a}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_GaugeModbus EXTENDS FB_GaugeBase
+    <Declaration><![CDATA[(* FB_GaugeModbus
+   Purpose    : Read the gauge/interlock status bits of a legacy Koyo PLC over Modbus TCP
+                (function code 2, read input status) and publish the configured bit on VG.
+   Usage      : Instantiate once per gauge backed by the legacy PLC and set IP, nMBAddr and
+                iBitOffset. iBitOffset selects the status bit inside the read input image and
+                ranges from 0 to gc_iModbusMaxBitOffset (gc_nModbusReadQty bits are read per poll).
+   Objectives : Non-blocking polling - a read that does not complete is re-issued after
+                gc_tModbusRetryPeriod. Hardware and scaling values live in the Constants GVL.
+   History    : 2c16823 Initial Modbus gauge interface (credit to Alex Wallace for the Koyo
+                Modbus addressing); 2026-11-27 Modbus hardware constants moved to the
+                Constants GVL and iBitOffset now drives the bit position instead of a literal.
+*)
+FUNCTION_BLOCK FB_GaugeModbus EXTENDS FB_GaugeBase
 VAR_INPUT
     IP: STRING;	//IP of Legacy PLC
     nMBAddr	:WORD; //Start address of the Register Memory
-    iBitOffset:INT :=0; // must be smaller than 32
+    iBitOffset:INT :=0; // Bit offset (0 .. gc_iModbusMaxBitOffset) of the gauge OK bit inside the read input image
     tTimeout :TIME:= T#1s;
 END_VAR
 VAR_OUTPUT
@@ -18,8 +30,10 @@ VAR
     ftReset	: F_TRIG;
     tonRetry : TON;
     ErrCount:INT :=0;
-    iIndex :INT;
-    iBit:INT;
+    iIndex :INT; // 1-based byte index into i_PLC_nBits, derived from iBitOffset
+    iBit:INT; // Bit number (0 .. 7) inside i_PLC_nBits[iIndex], derived from iBitOffset
+    iBitOffsetValid : INT; // iBitOffset clamped to the physical span of i_PLC_nBits
+    tBitOffsetFault : R_TRIG; // Logs once per occurrence when iBitOffset had to be clamped
 END_VAR
 VAR CONSTANT
     nZero : INT := 0;
@@ -54,13 +68,13 @@ Stage Status Bits (S) 6144 (012000)							1, 5, 15
 
 // Retry after some time
 tonRetry.IN := NOT fbPLCInputCoilsRx.bBusy;
-tonRetry.PT := T#10S;
+tonRetry.PT := gc_tModbusRetryPeriod;
 tonRetry();
 
 ftReset(CLK:=fbPLCInputCoilsRx.bBusy);
 fbPLCInputCoilsRx.bExecute := ftReset.Q OR tonRetry.Q;
 
-fbPLCInputCoilsRx(sIPAddr:=IP, nTCPPort:=502, nQuantity:=32, nMBAddr:=nMBAddr, cbLength:=SIZEOF(i_PLC_nBits),  pDestAddr:=ADR(i_PLC_nBits), tTimeout:=tTimeout);
+fbPLCInputCoilsRx(sIPAddr:=IP, nTCPPort:=gc_nModbusTCPPort, nQuantity:=gc_nModbusReadQty, nMBAddr:=nMBAddr, cbLength:=SIZEOF(i_PLC_nBits),  pDestAddr:=ADR(i_PLC_nBits), tTimeout:=tTimeout);
 //if there's a modbus error, set all incoming bits to zero
 IF fbPLCInputCoilsRx.bError THEN
     i_PLC_nBits[1].0 := 0;
@@ -83,9 +97,16 @@ IF fbPLCInputCoilsRx.bError THEN
     xNoPLCResponse:= TRUE;
 ELSIF NOT ftReset.Q AND fbPLCInputCoilsRx.cbRead > 0 THEN
     xNoPLCResponse:= FALSE;
-    VG.rPRESS := 1E-8;
-    iIndex:= REAL_TO_INT(iBitOffset/8);
-    iBit:= (24 MOD 10);
+    VG.rPRESS := gc_rModbusNoReadingPRESS;
+    // Hardware bit position of the gauge status bit. iBitOffset is a bit offset over the whole
+    // input image, so the byte index is 1-based and the bit number is the offset modulo 8.
+    iBitOffsetValid := LIMIT(nZero, iBitOffset, gc_iModbusMaxBitOffset);
+    tBitOffsetFault(CLK := iBitOffsetValid <> iBitOffset);
+    IF tBitOffsetFault.Q THEN
+        fbLogger(sMsg:='Modbus gauge iBitOffset out of range, clamped', eSevr:=TcEventSeverity.Warning);
+    END_IF
+    iIndex := iBitOffsetValid / gc_iModbusBitsPerByte + nOne;
+    iBit := iBitOffsetValid MOD gc_iModbusBitsPerByte;
     VG.xPRESS_OK := M_GetBit(iIndex,iBit);
     fbPLCInputCoilsRx.bExecute :=False;
 ELSIF (*ftReset.Q*) NOT (fbPLCInputCoilsRx.bExecute) AND fbPLCInputCoilsRx.cbRead = 0 THEN
