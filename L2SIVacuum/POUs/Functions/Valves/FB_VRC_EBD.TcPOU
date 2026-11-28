@@ -13,8 +13,12 @@ VAR_INPUT
     i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
 END_VAR
 VAR_OUTPUT
+    (* Valve interface exposed to EPICS. No PV name is hard-coded here: the PV prefix comes from
+       the pytmc pragma on the calling GVL instance (e.g. pv: XCS:RCC:VRC:01), while the ST_VRC /app/namespaces/d6f73763-31bc-4bea-8f49-b5906058e129/
+       ST_ValveBase members declare the per-record PV names, io directions and ZNAM/ONAM fields. *)
     {attribute 'pytmc' := '
     pv:
+    io: io
     '}
     iq_stValve : ST_VRC;
 END_VAR
