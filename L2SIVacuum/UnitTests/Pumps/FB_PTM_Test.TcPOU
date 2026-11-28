@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_Test" Id="{5710face-cb30-43bf-a820-221768375136}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK FB_PTM_Test EXTENDS TcUnit.FB_TestSuite
@@ -9,6 +9,7 @@ END_VAR
 VAR
     fb_TwisTorr: FB_PTM_TwisTorr;
     fb_PTM_Ebara_010M:FB_PTM_Ebara_010M;
+    fb_EBARA010M_Ovrd : FB_PTM_Ebara_010M; // Separate instance so the override test does not disturb the startup / scaling tests
 
     cycle:INT :=0;
     (*IO*)
@@ -25,6 +26,7 @@ END_VAR
       <ST><![CDATA[M_INIT();
 M_Interlock();
 M_PTM_EBARA();
+M_Override();
 cycle:=cycle+1;]]></ST>
     </Implementation>
     <Method Name="M_INIT" Id="{09056c01-bd86-4734-bc9b-0823ada814a0}">
@@ -87,6 +89,27 @@ END_IF
 
 
 ]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Override" Id="{a3f0b6d5-3f4a-4a3a-9a6e-0d4b4c1a7c19}">
+      <Declaration><![CDATA[(* Regression test for the Ebara 010M manual override (task #484).
+The override must not be honoured immediately and must never run the pump through a lost
+external interlock or a pump fault. i_xNCFault is not driven by this test program, so the
+lost-interlock case (i_xExtILKOk := FALSE) is used because it is deterministic in the test rig. *)
+METHOD M_Override
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('PTM_EBARA010M_Override_NoILKBypass');
+// Operator asks the pump to run and enables the manual override, but the external interlock is not satisfied.
+fb_EBARA010M_Ovrd.M_Run(TRUE);
+fb_EBARA010M_Ovrd.iq_stPTM.i_xOverride := TRUE;
+fb_EBARA010M_Ovrd(i_xExtILKOk := FALSE, i_tOvrdQualDur := T#10S, i_tOvrdMaxDur := T#10M);
+IF( cycle = 3) THEN
+    AssertFalse(fb_EBARA010M_Ovrd.iq_stPTM.q_RunDO ,'PTM EBARA010 override must not run the pump without interlock permission');
+    TEST_FINISHED_NAMED('PTM_EBARA010M_Override_NoILKBypass');
+END_IF]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_PTM_EBARA" Id="{d178c7fc-5b19-4193-b89d-ca84328bf708}">

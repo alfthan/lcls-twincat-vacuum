@@ -2,7 +2,23 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_Ebara_010M" Id="{db9fdbdf-85bb-4e58-96cc-808f2a65a0e5}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Ebara Turbo pump connected to the ETC010M Controller.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+
+ Override policy (a manual override is time-qualified, self-clearing and never a bypass of safety interlocks):
+ - The manual override request ST_EbaraPTM.i_xOverride (PV OVRD_ON) is only honoured while the pump fault
+   (i_xFault) and the external interlock permit (xExtRunOk) are both satisfied. Those checks stay
+   authoritative: an override can never run the pump through a pump fault or a lost interlock.
+ - The request is qualified by tonOvrd: it must be held continuously for i_tOvrdQualDur with the permit
+   satisfied, so a blip or a short toggle cannot engage the override.
+ - A qualified override is bounded by tonOvrdMax: after i_tOvrdMaxDur the request ST_EbaraPTM.i_xOverride is
+   cleared automatically and a diagnostic is logged through the shared logger, so an override can never be
+   left engaged indefinitely.
+
+ History:
+   2026-11-28 Scirix agent (task #484) - the override no longer takes effect immediately and no longer
+              bypasses the pump fault / external interlock checks; added the qualification timer
+              (i_tOvrdQualDur), the maximum-duration limiter (i_tOvrdMaxDur) and the self-clear of the
+              override request.*)
  {attribute 'no_check'}
 FUNCTION_BLOCK FB_PTM_Ebara_010M EXTENDS FB_Pump
 VAR_IN_OUT
@@ -14,6 +30,8 @@ VAR_INPUT
     i_rMaxBackingPressure : REAL := 3;
     i_iMinSpeed : DINT := 100; //Hz check pump manual for setting P43
     i_iMaxSpeed : DINT := 560; //Hz check pump manual for setting P43
+    i_tOvrdQualDur : TIME := T#10S; //Override is honoured only after it has been requested this long with the fault/interlock permit satisfied
+    i_tOvrdMaxDur : TIME := T#10M; //Maximum time a manual override may stay in effect before the request clears itself and a diagnostic is logged
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -26,6 +44,9 @@ VAR
     RTRIG_INLK: R_TRIG;
     TOF_RESET: TON :=(PT:=T#1S);
     TOF_SetSpeed: TON :=(PT:=T#1S);
+    tonOvrd : TON; //Override qualification timer: the override is honoured only after i_tOvrdQualDur of continuous request with the permit satisfied
+    tonOvrdMax : TON; //Override duration timer: runs while the override is in effect and expires it after i_tOvrdMaxDur
+    rtOvrdExpired : R_TRIG; //Rising edge of the maximum override duration expiry, used to clear the override request once
 
     (*IO*)
     (*inputs*)
@@ -63,8 +84,24 @@ iq_stPTM.q_xProtection:= TRUE;//iq_stPTM.xExtRunOk;
 ACT_IO();
 
 (* Basic pump supervisory section *)
-    (* If override mode, ignore everything else *)
-IF iq_stPTM.i_xOverride THEN
+    (* Override qualification and expiry. The override is not immediate any more: the request has to be held
+    for i_tOvrdQualDur with the pump fault and the external interlock permit satisfied before it is honoured,
+    so a blip cannot engage it. *)
+    tonOvrd(IN:= iq_stPTM.i_xOverride AND NOT iq_stPTM.i_xFault AND iq_stPTM.xExtRunOk, PT:= i_tOvrdQualDur);
+
+    (* Maximum override duration. A manual override must not stay engaged indefinitely: once it has been in
+    effect for i_tOvrdMaxDur the request is cleared so the pump returns to its commanded state, and a
+    diagnostic is logged through the shared logger so the removal is observable. *)
+    tonOvrdMax(IN:= tonOvrd.Q, PT:= i_tOvrdMaxDur);
+    rtOvrdExpired(CLK:= tonOvrdMax.Q);
+    IF rtOvrdExpired.Q THEN
+        iq_stPTM.i_xOverride := FALSE;
+        fbLogger(sMsg:='Turbo pump override cleared: maximum override duration expired.', eSevr:=TcEventSeverity.Warning);
+    END_IF
+
+    (* If override mode, follow the run switch - but only while the fault / interlock permit is satisfied.
+    The fault and interlock checks stay authoritative, so the override can never bypass them. *)
+IF tonOvrd.Q AND NOT tonOvrdMax.Q AND NOT iq_stPTM.i_xFault AND iq_stPTM.xExtRunOk THEN
     IF iq_stPTM.xRunSW THEN
         iq_stPTM.q_RunDO:=TRUE;
     ELSE
