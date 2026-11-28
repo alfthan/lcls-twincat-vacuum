@@ -1,24 +1,115 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VGC_Test" Id="{f7068602-850f-4f85-937b-c57c62973b92}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_VGC_Test EXTENDS TcUnit.FB_TestSuite
+    <Declaration><![CDATA[(* Unit tests for the gate valve interlock logic implemented by FB_VGC_2S (ST_VGC_2S).
+
+Purpose
+-------
+The suite drives the FB_VGC_2S instance VGC the way a PLC program does: every call
+passes both gauge structs, the external and PMPS interlock inputs, the override input
+and the fast fault output / arbiter references.  Every assertion reads a value the
+block itself computed (xAT_VAC, xOPN_OK, pv_xOPN_SW, q_xOPN_DO, xMPS_OK, xERR_*,
+eState, eVGC_State), so the suite cannot pass unless the interlock logic really runs.
+
+Covered behaviour
+-----------------
+VGC_Startup             first execution leaves the valve closed with the interlock made
+VGC_Interlock_Active    an open request is refused while a gauge xPRESS_OK is false
+VGC_Interlock_OK        the open request is passed once both gauges are OK and at vacuum
+VGC_Interlock_Lost      the open command is dropped when a gauge interlock is lost open
+VGC_External_Interlock  i_xExt_OK gates opening and latches ERR_ExtFault when lost open
+VGC_ATVac_Interlock     xAT_VAC gates opening and i_xDis_DPIlk bypasses that gate
+VGC_Lost_Vacuum         a pressure rise closes the valve, latches ERR_SP, and only an
+                        alarm reset clears it
+VGC_Override            the qualified override opens against the vacuum interlock and
+                        is released again when i_xOverrideMode drops
+VGC_MPS_OK              xMPS_OK follows the open position and the open command
+
+Deliberately not covered
+------------------------
+i_xEPS_OK is declared by FB_VGC_2S but not evaluated by it, so nothing is asserted on it.
+The PMPS/BPTM interlock needs a live arbiter, so i_xPMPS_OK is forced TRUE and ACT_PMPS
+is not exercised here.
+
+History
+-------
+2026-11-28 Audit iteration: rewritten so the valve block is actually executed.  The
+previous version had every FB invocation commented out and instantiated the legacy
+FB_VGC / ST_VGC, so all four assertions only read back values the test itself had
+written (VGC_Interlock_Active even asserted the opposite of its own setup).  The suite
+now targets FB_VGC_2S / ST_VGC_2S, passes the complete parameter list, drops the
+contradictory assertion, and adds the interlock loss, external interlock, at vacuum /
+differential pressure, lost vacuum, override and xMPS_OK cases.
+*)
+FUNCTION_BLOCK FB_VGC_Test EXTENDS TcUnit.FB_TestSuite
 VAR_INPUT
 END_VAR
 VAR_OUTPUT
 END_VAR
 VAR
-    VGC: FB_VGC;
-    US_IG : ST_VG;
-    DS_IG : ST_VG;
-    io_fbFFHWO    :    FB_HardwareFFOutput;
-    TotalTests : INT:=0;
-    ex               : __SYSTEM.ExceptionCode;
+    VGC : FB_VGC_2S;                  // Device under test: gate valve with two pressure setpoints
+    US_IG : ST_VG;                    // Upstream gauge handed to the valve
+    DS_IG : ST_VG;                    // Downstream gauge handed to the valve
+    io_fbFFHWO : FB_HardwareFFOutput; // Fast fault output the valve registers its fault with
+    fbArbiter : FB_Arbiter;           // PMPS arbiter the valve requires, unused here (i_xPMPS_OK is TRUE)
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[M_INIT();
-M_Interlock();]]></ST>
+M_Interlock();
+M_External_Interlock();
+M_ATVac_Interlock();
+M_Lost_Vacuum();
+M_Override();
+M_MPS_OK();]]></ST>
     </Implementation>
+    <Method Name="M_AcknowledgeAlarms" Id="{aa6d0db4-8495-4184-bc38-98e5b52397c2}">
+      <Declaration><![CDATA[METHOD M_AcknowledgeAlarms
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Drops any open request and issues one alarm reset so that the following test case
+starts from an acknowledged instead of a latched state.  The reset bit is consumed by
+ACT_ResetAlarms at the end of the execution started here. *)
+This^.VGC.M_Set_OPN_SW(FALSE);
+This^.VGC.iq_stValve.pv_xAlmRst := TRUE;
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ATVac_Interlock" Id="{8f4ae958-c084-4833-a605-903550e81694}">
+      <Declaration><![CDATA[METHOD M_ATVac_Interlock
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('VGC_ATVac_Interlock');
+// Both gauges are readable and the differential pressure is small, but the upstream
+// pressure is above the at vacuum setpoint: the vacuum interlock must refuse to open.
+This^.US_IG.rPRESS := 0.5;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
+This^.DS_IG.xPRESS_OK := TRUE;
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+This^.M_AcknowledgeAlarms();
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.xDP_OK, 'VGC xDP_OK is false although the differential pressure is within the allowed band');
+AssertFalse(This^.VGC.iq_stValve.xAT_VAC, 'VGC xAT_VAC is true although the upstream pressure is above the at vacuum setpoint');
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is true although the section is not at vacuum');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC kept the open request although the section is not at vacuum');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC commanded the valve open although the section is not at vacuum');
+// With the differential pressure interlock disabled the block may open the valve on the
+// external interlock alone, which is what the i_xDis_DPIlk bypass is for.
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := TRUE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is false although the differential pressure interlock is disabled and the external interlock is made');
+AssertTrue(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC dropped the open request although the differential pressure interlock is disabled');
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not open the valve although the differential pressure interlock is disabled');
+TEST_FINISHED_NAMED('VGC_ATVac_Interlock');]]></ST>
+      </Implementation>
+    </Method>
     <Method Name="M_Check_State" Id="{323f8a43-3288-4a88-896a-0ee6bf963246}">
       <Declaration><![CDATA[METHOD M_Check_State
 VAR_INPUT
@@ -28,121 +119,259 @@ END_VAR
         <ST><![CDATA[]]></ST>
       </Implementation>
     </Method>
+    <Method Name="M_External_Interlock" Id="{9eb2ce19-9b0a-43d1-b7f0-aae8dd9a8bc0}">
+      <Declaration><![CDATA[METHOD M_External_Interlock
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('VGC_External_Interlock');
+// Healthy gauges at vacuum, but the external interlock is not made: stay closed.
+This^.US_IG.rPRESS := 1E-9;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
+This^.DS_IG.xPRESS_OK := TRUE;
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+This^.M_AcknowledgeAlarms();
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := FALSE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is true although the external interlock is not made');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC kept the open request although the external interlock is not made');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC commanded the valve open although the external interlock is not made');
+// External interlock made again: a fresh open request must be passed through.
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not open the valve although every interlock is made');
+// The valve is open when the external interlock drops: close it and latch the fault.
+This^.VGC.i_xOpnLS := TRUE;
+This^.VGC.i_xClsLS := FALSE;
+This^.M_Run(xExt_OK := FALSE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC did not drop the open request when the external interlock was lost');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not close the valve when the external interlock was lost');
+AssertTrue(This^.VGC.iq_stValve.xERR_ExtFault, 'VGC did not latch the external interlock fault');
+AssertTrue(This^.VGC.iq_stValve.eVGC_State = E_VGC.ERR_ExtFault, 'VGC did not move to the ERR_ExtFault state');
+TEST_FINISHED_NAMED('VGC_External_Interlock');]]></ST>
+      </Implementation>
+    </Method>
     <Method Name="M_INIT" Id="{872ba40e-8e0d-4855-ae6d-7645f3617e36}">
-      <Declaration><![CDATA[METHOD M_INIT : BOOL
+      <Declaration><![CDATA[METHOD M_INIT
 VAR//_INPUT
 
 END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[TEST('VGC_Startup');
+// Cold start with both gauges at vacuum: the block must keep the valve closed and must
+// report the interlock as made and the section as at vacuum.
 This^.US_IG.rPRESS := 1E-9;
 This^.US_IG.xPRESS_OK := TRUE;
-This^.US_IG.xAT_VAC := TRUE;
-
 This^.DS_IG.rPRESS := 1E-9;
 This^.DS_IG.xPRESS_OK := TRUE;
-
-(*This^.VGC(
-    i_stUSG:= This^.US_IG,
-    i_stDSG:= This^.DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= TRUE ,
-    //i_xPMPS_OK:= TRUE,
-    i_xExt_OK:= TRUE,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= This^.io_fbFFHWO,
-    fbArbiter:=g_fbArbiter);
-*)
-AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
-AssertFalse(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
-TEST_FINISHED_NAMED('VGC_Startup');
-
-
-
-
-
-
-
-
-]]></ST>
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+// First execution of the block, so xFirstPass is true inside FB_VGC_2S
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.eState = E_ValvePositionState.CLOSED, 'VGC does not report the valve closed on startup');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC pv_xOPN_SW is set to true on startup');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC q_xOPN_DO is set to true on startup');
+AssertFalse(This^.VGC.xMPS_OK, 'VGC xMPS_OK is true although the valve is closed');
+AssertTrue(This^.VGC.iq_stValve.xAT_VAC, 'VGC xAT_VAC is false although both gauges are below the at vacuum setpoint');
+AssertTrue(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is false although every interlock input is made');
+AssertTrue(This^.VGC.iq_stValve.eVGC_State = E_VGC.AtVacuum, 'VGC did not move to the AtVacuum state on startup');
+TEST_FINISHED_NAMED('VGC_Startup');]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_Interlock" Id="{35580cdf-b62c-4fb5-b5f0-7ced6771af19}">
-      <Declaration><![CDATA[METHOD M_Interlock : BOOL
+      <Declaration><![CDATA[METHOD M_Interlock
 VAR//_INPUT
 
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[// Test interlock is active and attempting to open valve
-TEST('VGC_Interlock_Active');
+        <ST><![CDATA[TEST('VGC_Interlock_Active');
+// The upstream gauge reports a fault, so the interlock is not made: the block must
+// refuse the open request it is handed.
+This^.US_IG.rPRESS := 1E-9;
 This^.US_IG.xPRESS_OK := FALSE;
-This^.DS_IG.xPRESS_OK := FALSE;
-VGC.M_Set_OPN_SW(TRUE);
-// run the function block one more time
-(*VGC(
-    i_stUSG:= US_IG,
-    i_stDSG:= DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= TRUE ,
-    i_xPMPS_OK:= TRUE ,
-    i_xExt_OK:= TRUE,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= io_fbFFHWO);*)
-AssertFalse(VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
-AssertFalse(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
+This^.DS_IG.rPRESS := 1E-9;
+This^.DS_IG.xPRESS_OK := TRUE;
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+// Operator or EPICS asks for the valve to open
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.xAT_VAC, 'VGC xAT_VAC is true although the upstream gauge is not OK');
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is true although the upstream gauge is not OK');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC kept the open request although the gauge interlock is not made');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC commanded the valve open although the gauge interlock is not made');
 TEST_FINISHED_NAMED('VGC_Interlock_Active');
-// Test interlock is not active and attempting to open valve
+// Both gauges are healthy and at vacuum again: the block must clear the latched
+// differential pressure alarm and pass the open request through.
 TEST('VGC_Interlock_OK');
+This^.US_IG.rPRESS := 1E-9;
 This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
 This^.DS_IG.xPRESS_OK := TRUE;
-VGC.M_Set_OPN_SW(TRUE);
-// run the function block one more time
-(*VGC(
-    i_stUSG:= US_IG,
-    i_stDSG:= DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= ,
-    i_xPMPS_OK:= ,
-    i_xExt_OK:= ,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= io_fbFFHWO);*)
-AssertTrue(VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to false');
-AssertTrue(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to false');
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+This^.M_AcknowledgeAlarms();
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.xAT_VAC, 'VGC xAT_VAC is false although both gauges are at vacuum and OK');
+AssertTrue(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is false although every interlock input is made');
+AssertTrue(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC dropped the open request although the interlocks are made');
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not command the valve open although the interlocks are made');
+AssertFalse(This^.VGC.iq_stValve.xERR_DifPres, 'VGC kept the differential pressure alarm after the gauges recovered');
+AssertTrue(This^.VGC.iq_stValve.eVGC_State = E_VGC.AtVacuum, 'VGC did not return to the AtVacuum state after the alarm was acknowledged');
 TEST_FINISHED_NAMED('VGC_Interlock_OK');
-// Test interlock ok lost while valve is open
+// The valve is open when the upstream gauge fails: the interlock is lost and the block
+// must drop the open command.
 TEST('VGC_Interlock_Lost');
-This^.US_IG.xPRESS_OK := False;
+This^.VGC.i_xOpnLS := TRUE;
+This^.VGC.i_xClsLS := FALSE;
+This^.US_IG.xPRESS_OK := FALSE;
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.eState = E_ValvePositionState.OPEN, 'VGC does not report the valve open before the interlock is lost');
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is true although the upstream gauge interlock was lost');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC did not drop the open request when the interlock was lost');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not drop the open command when the interlock was lost');
+AssertFalse(This^.VGC.xMPS_OK, 'VGC xMPS_OK is true although the valve is no longer commanded open');
+TEST_FINISHED_NAMED('VGC_Interlock_Lost');]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Lost_Vacuum" Id="{84ff8fb1-7c20-46bd-b81c-37c0e6eba182}">
+      <Declaration><![CDATA[METHOD M_Lost_Vacuum
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('VGC_Lost_Vacuum');
+// Valve open and at vacuum: a pressure rise on the upstream gauge must close the valve,
+// latch the setpoint error and keep it latched until it is acknowledged.
+This^.US_IG.rPRESS := 1E-9;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
 This^.DS_IG.xPRESS_OK := TRUE;
-// run the function block one more time
-(*VGC(
-    i_stUSG:= US_IG,
-    i_stDSG:= DS_IG ,
-    i_xDis_DPIlk:= FALSE,
-    i_xEPS_OK:= ,
-    i_xPMPS_OK:= ,
-    i_xExt_OK:= ,
-    i_xOverrideMode:= ,
-    i_xReset:= ,
-    iq_stValve=> ,
-    xMPS_OK=> ,
-    io_fbFFHWO:= io_fbFFHWO);*)
-AssertFalse(VGC.iq_stValve.pv_xOPN_SW,'VGC pv_xOPN_SW is set to true');
-AssertFalse(VGC.iq_stValve.q_xOPN_DO,'VGC q_xOPN_DO is set to true');
-TEST_FINISHED_NAMED('VGC_Interlock_Lost');
-
-
-]]></ST>
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+This^.M_AcknowledgeAlarms();
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not open the valve while the section was at vacuum');
+// The valve is open now; a leak raises the upstream pressure above the setpoint, while
+// the differential pressure stays inside the allowed band.
+This^.VGC.i_xOpnLS := TRUE;
+This^.VGC.i_xClsLS := FALSE;
+This^.US_IG.rPRESS := 1.0;
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.xAT_VAC, 'VGC xAT_VAC is true although the upstream pressure is above the setpoint');
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is true although the section lost vacuum');
+AssertFalse(This^.VGC.iq_stValve.pv_xOPN_SW, 'VGC did not drop the open request when vacuum was lost');
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not close the valve when vacuum was lost');
+AssertTrue(This^.VGC.iq_stValve.xERR_SP, 'VGC did not latch the lost vacuum alarm');
+AssertTrue(This^.VGC.iq_stValve.eVGC_State = E_VGC.ERR_LostVac, 'VGC did not move to the ERR_LostVac state');
+// The alarm must stay latched once the pressure is good again, until it is acknowledged
+This^.US_IG.rPRESS := 1E-9;
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.xERR_SP, 'VGC cleared the lost vacuum alarm without an alarm reset');
+// Acknowledging the alarm clears it and lets the block return to the at vacuum state
+This^.VGC.iq_stValve.pv_xAlmRst := TRUE;
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.xERR_SP, 'VGC kept the lost vacuum alarm after it was acknowledged');
+AssertTrue(This^.VGC.iq_stValve.eVGC_State = E_VGC.AtVacuum, 'VGC did not return to the AtVacuum state after the alarm was acknowledged');
+TEST_FINISHED_NAMED('VGC_Lost_Vacuum');]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_MPS_OK" Id="{2a395be0-80f1-4d00-8ba3-f175446df71d}">
+      <Declaration><![CDATA[METHOD M_MPS_OK
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('VGC_MPS_OK');
+// xMPS_OK is the fast fault condition of the valve: it must be true only while the
+// valve reports open AND is being commanded open.
+This^.US_IG.rPRESS := 1E-9;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 1E-9;
+This^.DS_IG.xPRESS_OK := TRUE;
+This^.VGC.i_xOpnLS := TRUE;
+This^.VGC.i_xClsLS := FALSE;
+This^.M_AcknowledgeAlarms();
+This^.VGC.M_Set_OPN_SW(TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not command the open valve open');
+AssertTrue(This^.VGC.xMPS_OK, 'VGC xMPS_OK is false although the valve is open and commanded open');
+// Dropping the open command must drop xMPS_OK with it
+This^.VGC.M_Set_OPN_SW(FALSE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not drop the open command');
+AssertFalse(This^.VGC.xMPS_OK, 'VGC xMPS_OK is true although the valve is not commanded open');
+TEST_FINISHED_NAMED('VGC_MPS_OK');]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Override" Id="{e5d1d022-c770-44b5-8e66-43df2af1624e}">
+      <Declaration><![CDATA[METHOD M_Override
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('VGC_Override');
+// The vacuum interlock is not made, but the global override is active: the block must
+// open the valve anyway, and must release the override when the override mode drops.
+This^.US_IG.rPRESS := 0.5;
+This^.US_IG.xPRESS_OK := TRUE;
+This^.DS_IG.rPRESS := 0.5;
+This^.DS_IG.xPRESS_OK := TRUE;
+This^.VGC.i_xOpnLS := FALSE;
+This^.VGC.i_xClsLS := TRUE;
+This^.M_AcknowledgeAlarms();
+// Collapse the override qualification time so the timer can expire inside one test cycle
+This^.VGC.tOvrd := T#0S;
+This^.VGC.iq_stValve.pv_xOvrdOpn := TRUE;
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := TRUE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := TRUE);
+AssertFalse(This^.VGC.iq_stValve.xOPN_OK, 'VGC xOPN_OK is true although the section is not at vacuum');
+AssertTrue(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC did not open the valve in override mode');
+// Releasing the override mode must drop the open command again
+This^.VGC.M_Set_OPN_SW(FALSE);
+This^.M_Run(xExt_OK := TRUE, xPMPS_OK := TRUE, xDis_DPIlk := FALSE, xOverrideMode := FALSE);
+AssertFalse(This^.VGC.iq_stValve.q_xOPN_DO, 'VGC kept the valve open after the override mode was released');
+AssertFalse(This^.VGC.iq_stValve.pv_xOvrdOpn, 'VGC kept the override request after the override mode was released');
+// Restore the override qualification time for the remaining scans
+This^.VGC.tOvrd := T#10S;
+TEST_FINISHED_NAMED('VGC_Override');]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Run" Id="{a07337bb-1856-4997-971d-ac6ef9a98dd8}">
+      <Declaration><![CDATA[METHOD M_Run
+VAR_INPUT
+    xExt_OK : BOOL;       // External interlock presented to the valve
+    xPMPS_OK : BOOL;      // PMPS interlock presented to the valve
+    xDis_DPIlk : BOOL;    // TRUE disables the differential pressure interlock
+    xOverrideMode : BOOL; // Global override mode presented to the valve
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Executes FB_VGC_2S exactly once with the current gauge structs and the given
+interlock inputs.  Every test case goes through this method so that the block is always
+called with the same complete parameter list.  i_xEPS_OK is wired for completeness but
+is not evaluated by FB_VGC_2S, see the suite header. *)
+This^.VGC(
+    i_stUSG := This^.US_IG,
+    i_stDSG := This^.DS_IG,
+    i_xDis_DPIlk := xDis_DPIlk,
+    i_xPMPS_OK := xPMPS_OK,
+    i_xEPS_OK := TRUE,
+    i_xExt_OK := xExt_OK,
+    i_xOverrideMode := xOverrideMode,
+    i_xReset := FALSE,
+    i_sDevName := 'FB_VGC_Test',
+    i_nTransitionRootID := 1000,
+    io_fbFFHWO := This^.io_fbFFHWO,
+    fbArbiter := This^.fbArbiter);]]></ST>
       </Implementation>
     </Method>
   </POU>
