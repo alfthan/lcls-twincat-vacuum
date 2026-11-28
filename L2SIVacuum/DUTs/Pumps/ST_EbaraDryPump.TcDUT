@@ -33,6 +33,10 @@ tonBP	:	TON := (PT:=T#5S); //Timer for pressure and valve stability
 
 
 //Readbacks
+(* Status readbacks are PLC->EPICS only. pytmc normalises 'io: i' to an EPICS input
+record, generated as the read-only <PV>_RBV; 'io: o' would additionally emit a writable
+output record, letting operators write into these readback variables. Keep 'io: i' for
+every member of this group. *)
 {attribute 'pytmc' := '
     pv: MPStatus;
     field: ZNAM FALSE;
