@@ -1,10 +1,21 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="F_TurboGateValve_ILK" Id="{eb658a33-521f-4cf9-a184-bda34b0c1585}" SpecialFunc="None">
-    <Declaration><![CDATA[(* This Function Block evaluates the ILK condition of the Turbo Gate valve *)
-(* The logic Protects the Turbo pump from inlet pressure above the SP*)
+    <Declaration><![CDATA[(* F_TurboGateValve_ILK: interlock (permit) that protects the Turbo pump from an *)
+(* inlet pressure above the configured set point while the Turbo is running. *)
+(* Scope of this interlock: it checks ONLY (a) that the Turbo pump is not STOPPED, *)
+(* STOPPING or FAULT and (b) that the inlet gauge reading is valid and below *)
+(* i_Turbo.rInletPressureSP. *)
+(* It does NOT check the vent valve position, the backing pressure or the roughing *)
+(* (scroll) pump state, because it has no inputs for them: wiring this function *)
+(* alone as the Turbo run permit does not satisfy the documented Turbo run *)
+(* interlock. Use F_TurboExtILKLogic (vent valve closed, inlet and backing *)
+(* pressure below their SPs, roughing pump running) for the Turbo run permit, and *)
+(* F_TurboGateValve_Protection_ILK (inlet + backing pressure + roughing pump) when *)
+(* this gate valve needs the extended protection. *)
+(* Returns TRUE when the interlock is satisfied (gate valve operation permitted). *)
 
-FUNCTION F_TurboGateValve_ILK : BOOL (* function return TRUE when ILK is OK*)
+FUNCTION F_TurboGateValve_ILK : BOOL (* function returns TRUE when ILK is OK*)
 VAR_INPUT
     i_Turbo : ST_PTM; // Turbo Pump
     i_stISG : ST_VG; //Gauge measuring inlet Pressure e.g Pirani
@@ -13,8 +24,9 @@ VAR
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[(* This Function Block evaluates the ILK condition of the Turbo Gate valve *)
-(* The logic Protects the Turbo pump from inlet pressure above the SP*)
+      <ST><![CDATA[(* Inlet-pressure / Turbo-state gate valve interlock only - see the declaration *)
+(* header above for the full scope; vent valve, backing pressure and roughing *)
+(* pump checks live in F_TurboExtILKLogic and F_TurboGateValve_Protection_ILK. *)
 F_TurboGateValve_ILK := (NOT (i_Turbo.eState = pumpSTOPPED) AND NOT (i_Turbo.eState = pumpSTOPPING) AND NOT (i_Turbo.eState = pumpFAULT))
                         AND (i_stISG.xPRESS_OK AND i_stISG.rPRESS < i_Turbo.rInletPressureSP);
 ]]></ST>

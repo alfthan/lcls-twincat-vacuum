@@ -6,6 +6,13 @@
 (* The Turbo shall not Run if the vent valve is open*)
 (* The function also switches off the Turbo if the Inlet pressure or the backing Pressure*)
 (* are higher than the configured set point*)
+(* This function is the Turbo RUN interlock: besides the Inlet and backing pressure*)
+(* checks above, it also evaluates the vent valve and the roughing (scroll) pump*)
+(* state.*)
+(* It is NOT the Turbo gate valve interlock. The gate valve has its own,*)
+(* narrower interlocks - F_TurboGateValve_ILK (inlet pressure + Turbo state only)*)
+(* and F_TurboGateValve_Protection_ILK (inlet + backing pressure + roughing pump)*)
+(* state) - which are evaluated separately and are not replaced by this function.*)
 FUNCTION F_TurboExtILKLogic : BOOL
 VAR_INPUT
     Turbo		:	ST_PTM;
