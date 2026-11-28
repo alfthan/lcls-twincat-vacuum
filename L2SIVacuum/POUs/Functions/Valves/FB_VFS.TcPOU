@@ -73,7 +73,7 @@ VAR
     // Interface
     i_xPress_OK AT%I*:BOOL; (*To be linked to the Fast sensor structure signal IG.xPRESS_OK, to make sure that the device is connected*)
     i_xOPN_SW AT%I*:BOOL;
-    i_xCLS_SW AT%I*:BOOL; (*external open signal e.g epics*)
+    i_xCLS_SW AT%I*:BOOL; (* CLS_SW close command from epics: TRUE = close the shutter. Cleared by the interface block once the closed limit switch is made *)
     i_xVAC_FAULT_Reset	AT%I*: BOOL;(*Valve Vacuum OK, is set to False when there is Vacuum Fault*)
     i_xOverrideMode AT%I*: BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
     i_xOverrideOpen AT%I*: BOOL;

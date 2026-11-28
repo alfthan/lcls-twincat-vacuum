@@ -1,7 +1,52 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_VFS" Id="{8275c670-8be0-48e8-a78e-3305de49bb93}">
-    <Declaration><![CDATA[TYPE ST_VFS EXTENDS ST_ValveBase:
+    <Declaration><![CDATA[(*
+    ST_VFS - EPICS-facing data of a fast shutter valve, device class VFS.
+
+    PURPOSE
+        Publishes the fast-shutter specific signals of one VFS to EPICS and
+        carries them between the fast PLC task and the rest of the vacuum
+        logic. The generic valve members - commands, readbacks, position and
+        state, error and logger - are inherited from ST_ValveBase; this struct
+        adds only the fast-close trigger, the close command and the identity of
+        the devices that gate or veto the shutter.
+
+    USAGE
+        Declared as the VAR_OUTPUT iq_stValve of FB_VFS_Interface, the single
+        gauge variant, and of FB_VFS_2OO3Interface, the 2-out-of-3 variant.
+        Both interface blocks run in the fast task and drive FB_VFS or
+        FB_VFS_2OO3 over the fast EtherCAT I/O. Every member carries its own
+        pytmc pragma, so the struct is published as the records below that PV:
+        EPICS writes the io: io members, and the interface block fills the
+        io: i members from the fast-task I/O and the interlocking devices.
+
+    OBJECTIVES
+        - Give integrators the complete command, interlock and fault surface of
+          a fast shutter in one type, instead of requiring them to read the FB
+          internals.
+        - State the polarity of every BOOL next to its declaration. xCLS_SW is
+          a CLOSE command - TRUE means close - and i_xTrigger is an active
+          trigger, so neither can be wired inverted by accident.
+        - Name the devices that inhibit or veto the shutter, so an unexplained
+          fault can be traced to the gauge or veto valve that produced it.
+
+    HISTORY
+        2020-06-30 / M. Ghaly
+            Struct created with the VFS and MPS changes, commit 1a9d6b3.
+        2020-11-04 / M. Ghaly
+            Added the veto device and interlock gauge fields, commit 55b7003.
+        2026-11-28 / Scirix Agent
+            Added this header block and a meaning comment on every member, and
+            corrected the xCLS_SW comment that described it as an open signal;
+            documentation only, no behaviour change. Audit finding #578.
+
+    NOTE
+        Every BOOL and STRING member is dimensionless. No member of this struct
+        carries an engineering unit; the two STRING members carry EPICS path and
+        device-name text.
+*)
+TYPE ST_VFS EXTENDS ST_ValveBase:
 STRUCT
 
 (* Interlock *)
@@ -11,7 +56,7 @@ STRUCT
     field: ONAM TRIG_ON;
     io: i ;
     '}
-    i_xTrigger : BOOL;
+    i_xTrigger : BOOL; (* TRUE while the fast-close trigger is active; published readback of the trigger that drives the shutter closed *)
 (* Commands *)
     {attribute 'pytmc' := '
     pv: CLS_SW;
@@ -19,7 +64,7 @@ STRUCT
     field: ONAM CLOSE;
     io: io ;
     '}
-    xCLS_SW AT%Q*:BOOL; (*external open signal e.g epics*)
+    xCLS_SW AT%Q*:BOOL; (* Close command from EPICS: TRUE = request CLOSE, FALSE = no close request. The interface block clears it once the closed limit switch i_xClsLS is made *)
 
 (* Alarm Outputs *)
     {attribute 'pytmc' := '
@@ -28,14 +73,14 @@ STRUCT
     field: ONAM External error present ;
     io: i;
     '}
-    xERR_ExtFault		: 	BOOL;
+    xERR_ExtFault		: 	BOOL; (* External fault status published as ERR_Ext: TRUE = an external fault is present, FALSE = no external fault. Dimensionless *)
     {attribute 'pytmc' := '
     pv: VAC_FAULT_OK;
     field: ZNAM FAULT ;
     field: ONAM FAULT OK;
     io: i ;
     '}
-    i_xVAC_FAULT_OK : BOOL; (*Valve Vacuum OK, is set to False when there is Vacuum Fault*)
+    i_xVAC_FAULT_OK : BOOL; (* Valve vacuum permit: TRUE = vacuum OK, FALSE = vacuum fault present. Gates xOPN_OK *)
 
 
 (*ILK Devices*)
@@ -43,13 +88,13 @@ STRUCT
     pv: GFS;
     io: i;
     '}
-    sGFS: String;
+    sGFS: String; (* Path of the gauge this shutter is interlocked to, taken from ST_VG.sPath; the 2-out-of-3 variant publishes the three paths comma separated. No units *)
 
     {attribute 'pytmc' := '
     pv: VETO_DEVICE;
     io: i;
     '}
-    sVetoDeviceName: STRING;
+    sVetoDeviceName: STRING; (* Device name, ST_VGC.sDevName, of the veto valve that can inhibit a trigger; empty when no veto valve is configured. No units *)
 
 END_STRUCT
 END_TYPE]]></Declaration>

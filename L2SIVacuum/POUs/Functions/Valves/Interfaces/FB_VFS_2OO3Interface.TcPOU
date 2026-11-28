@@ -50,7 +50,7 @@ VAR
     q_xPRESS_OK_IG2 AT%Q* : BOOL;
     q_xPRESS_OK_IG3 AT%Q* : BOOL;
     q_xOPN_SW AT%Q* : BOOL;
-    q_xCLS_SW AT%Q* : BOOL; (*external open signal e.g epics*)
+    q_xCLS_SW AT%Q* : BOOL; (* CLS_SW close command from epics: TRUE = close. Copied from iq_stValve.xCLS_SW, which is cleared once the closed limit switch is made *)
     q_xVAC_FAULT_Reset AT%Q* : BOOL; (*Valve Vacuum OK, is set to False when there is Vacuum Fault*)
     q_xOverrideMode AT%Q* : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
     q_xOverrideOpen AT%Q* : BOOL;
