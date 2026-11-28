@@ -5,13 +5,31 @@
 (* THE FB_VCC FUNCTION BLOCK IS DEPRECATED. USE FB_VVC INSTEAD. *)
 (* This Function Block Implements Basic Functionality for Vent Valves VVC *)
 (* Note Interlock Logic is External *)
+(*
+    Usage:
+        - Wire i_xExtILK_OK to the vent-valve interlock function (F_<Device>_ILK), or set it TRUE
+          when the valve has no external interlock.
+        - Wire i_xOverrideMode to the vacuum override request and connect iq_stValve to EPICS
+          (OPN_SW, FORCE_OPN, OVRD_ON, OPN_OK, OPN_DO).
+
+    Objectives:
+        - Command the open solenoid output from the software open request (pv_xOPN_SW) and from the
+          external interlock permit (i_xExtILK_OK, published as xOPN_OK).
+        - Honour a manual Force Open override (xOvrdOpn) only after it has been held for ten seconds,
+          and never let that override bypass the external interlock permit.
+
+    History:
+        - 2026-11-28, Scirix Agent: the override branch of q_xOPN_DO is now ANDed with the interlock
+          permit xOPN_OK, so a held Force Open request can no longer open the valve while the external
+          interlock is unsatisfied (audit finding #597, convention conv_eeb5d87743fc).
+*)
 FUNCTION_BLOCK FB_VCC
 VAR_IN_OUT
 
 END_VAR
 VAR_INPUT
     i_xExtILK_OK:BOOL; (*Other External Interlock, Set to True when no external interlock is required*)
-    i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only*)
+    i_xOverrideMode : BOOL; (*To be linked to global override bit. This overrides the software open request only; the external interlock permit xOPN_OK is never overridden*)
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -21,9 +39,9 @@ VAR_OUTPUT
 END_VAR
 VAR
 
-    tonOvrd	:	TON;
-    tonDelOK : TON;
-    rtOK	:	R_TRIG;
+    tonOvrd	:	TON; (*Override qualification timer: the Force Open override is honoured only after it has been requested for ten seconds*)
+    tonDelOK : TON; (*Permit-healthy timer: used to release a stale override once the interlock permit has been good for ten seconds*)
+    rtOK	:	R_TRIG; (*Rising edge of tonDelOK.Q*)
 
     (*IO*)
     q_xOPN_DO	AT%Q*: BOOL;
@@ -50,8 +68,12 @@ IF rtOK.Q THEN iq_stValve.xOvrdOpn :=FALSE; END_IF
 //Override timer
 tonOvrd(IN:=iq_stValve.xOvrdOpn, PT:=T#10S);
 
-(* Here's where the valve opens *)
-iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+(* Here's where the valve opens.
+Both terms are ANDed with the interlock permit (xOPN_OK): the manual override only replaces the software
+open request (pv_xOPN_SW), it can never hold the valve open while the external interlock permit is not
+satisfied. Without that AND a stuck or forgotten Force Open request would defeat the vacuum protection
+logic for as long as the request is held. *)
+iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode AND iq_stValve.xOPN_OK);
 
 (*IO Mapping*)
 ACT_IO();]]></ST>
