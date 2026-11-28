@@ -1,10 +1,70 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_VWC_NO" Id="{00904a76-0b8d-4527-b20a-255e2a186ec3}">
-    <Declaration><![CDATA[TYPE ST_VWC_NO EXTENDS ST_VGC:
+    <Declaration><![CDATA[(*
+    ST_VWC_NO - status/interface struct of a normally-open (NO) VWC gate valve.
+
+    PURPOSE
+        Extends ST_VGC - the gate-valve status record that carries the
+        differential-pressure and at-vacuum interlocks, the alarm outputs and
+        the interlock device names - with the close side of a normally-open
+        valve: the close permission xCLS_OK, the EPICS close switch
+        pv_xCLS_SW and the EPICS force-close request pv_xOvrdCls.
+        A normally-open valve rests OPEN when it is de-energized, so the side
+        that needs a permission here is CLOSING, not opening. The open side
+        (pv_xOPN_SW, xOPN_OK, pv_xOvrdOpn, xOverrideMode) is inherited from
+        ST_ValveBase through ST_VGC and is not repeated in this type.
+        All three members declared here are BOOL, so no engineering units
+        apply. Each member states its TRUE state, and repeats the pytmc
+        ZNAM/ONAM text, so the PLC value and the EPICS record cannot drift
+        apart unnoticed.
+
+    USAGE
+        The pytmc-tagged valve record exposed by the function block that drives
+        a normally-open VWC valve, in the same way ST_VRC_NO is the record of
+        FB_VRC_NO / FB_VRC_DA and ST_VCC_NO is the record of
+        FB_TurbVentvalve_NO. An integrator wiring the HMI or IOC reads xCLS_OK
+        to know whether closing is permitted, writes pv_xCLS_SW to request a
+        state, and may pulse pv_xOvrdCls to force the valve closed.
+        Nothing in this repository references ST_VWC_NO today: it is a
+        <Compile> item in L2SIVacuum.plcproj, so TwinCAT compiles it, but no
+        POU declares a variable of this type and no code writes or reads these
+        members yet. Treat it as the defined interface only; the close-side
+        logic that ST_VRC_NO gets from FB_VRC_NO_FFO / FB_VRC_DA still has to
+        be written for this type.
+        When that block is written: pv_xCLS_SW is EPICS read/write, so it holds
+        the last commanded state as well as the request, and it must be cleared
+        when xCLS_OK drops, otherwise a stale close request survives the loss of
+        the close permission (see the reset in FB_VRC_NO_FFO).
+
+    OBJECTIVES
+        Make the polarity of the close side explicit in the type definition, so
+        that nobody has to read a function block to learn that TRUE means CLOSE
+        and FALSE means OPEN on these PVs, and which member is a permission,
+        which is a command and which is a force request.
+
+    HISTORY
+        2026-11-28 / Scirix Agent
+            Added this header and an inline comment on each member (meaning,
+            polarity, PV direction and units). Comment only: no declaration,
+            data type, default value, member order or pytmc pragma changed
+            (task #461, code-comment convention).
+        2022-10-19 / jyin999 <jyin@slac.stanford.edu>
+            FORCE_CLS / FORCE_OPN field names fixed (commit 17a55e1).
+        2020-11-04 / ghalym <mghaly@slac.stanford.edu>
+            Type added to the library together with the normally-open valve
+            records it mirrors (commit 55b7003).
+*)
+TYPE ST_VWC_NO EXTENDS ST_VGC:
 STRUCT
 (* Readbacks *)
-    //In case VRC is normally open
+    // Normally-open variant: TRUE = CLOSE and FALSE = OPEN on the PVs below.
+    (* Close permission (PV CLS_OK, EPICS input, io: i): TRUE = closing this
+       normally-open valve is permitted; FALSE = closing is inhibited and the
+       valve is held open, which is also its de-energized state. Set by the
+       owning function block from the close interlock, not by the operator.
+       Boolean, no units. The PV maps TRUE to ONAM "CLOSE" and FALSE to ZNAM
+       "OPEN", so the record reads CLOSE (not "OK") while TRUE. Default TRUE. *)
     {attribute 'pytmc' := '
     pv: CLS_OK;
     field: ONAM CLOSE;
@@ -12,6 +72,11 @@ STRUCT
     io: i;
     '}
     xCLS_OK : BOOL := TRUE;
+    (* Close switch, EPICS read/write (PV CLS_SW, io: io): TRUE = request the
+       valve CLOSED, FALSE = request it OPEN. Because a normally-open valve
+       fails open, FALSE is both the open request and the de-energized state.
+       Must be cleared by the owning function block when the close permission
+       xCLS_OK is FALSE. Boolean, no units. *)
     {attribute 'pytmc' := '
     pv: CLS_SW ;
     field: ONAM CLOSE;
@@ -19,6 +84,14 @@ STRUCT
     io: io ;
     '}
     pv_xCLS_SW	: BOOL;
+    (* Force-close request, EPICS read/write (PV FORCE_CLS, io: io): TRUE =
+       request the valve CLOSED regardless of pv_xCLS_SW, so a valve whose close
+       side is not otherwise permitted can still be shut. Honoured only while
+       the inherited xOverrideMode (PV OVRD_ON) is TRUE, and only after a
+       qualification time: the sibling normally-open blocks qualify it with
+       tOvrd (T#10s in this library) and clear the request once xCLS_OK has
+       been TRUE for 10 s, so it is never a permanent bypass of the interlocks.
+       Boolean, no units. *)
     {attribute 'pytmc' := '
     pv: FORCE_CLS;
     field: ONAM FORCE CLOSE;
