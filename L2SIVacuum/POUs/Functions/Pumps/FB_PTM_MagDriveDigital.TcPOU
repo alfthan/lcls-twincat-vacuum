@@ -12,8 +12,10 @@ VAR_INPUT
     i_xExtILKOk : BOOL; // Connect to external interlock logic, TRUE if not used.
 END_VAR
 VAR_OUTPUT
-{attribute 'pytmc' := '
-    pv:
+    {attribute 'pytmc' := '
+    pv: PTM;
+    io: io;
+    field: DESC Leybold MagDrive Digital pump;
     '}
     iq_stPtm	:	ST_LeyboldPTM;
 END_VAR
