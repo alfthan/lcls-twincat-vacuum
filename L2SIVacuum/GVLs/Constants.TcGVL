@@ -4,6 +4,16 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    // Analog input terminal hardware calibration.
+    // Raw ADC count at full-scale input: a 0..10 V span covers 0..32767 bits on the
+    // Beckhoff EP/EL analog terminals. Recalibrate here, not in the gauge conversion code.
+    gc_iAdcFullScale : INT := 32767;
+
+    // Voltage offset of the observed gauge state boundaries from their nominal values
+    // on an EP box (MKS 500 EP-box calibration). Referenced by every state branch so that
+    // a recalibration cannot be applied to only some of them.
+    gc_rGaugeStateBoundaryOffset : REAL := 0.3;
 END_VAR
 ]]></Declaration>
   </GVL>

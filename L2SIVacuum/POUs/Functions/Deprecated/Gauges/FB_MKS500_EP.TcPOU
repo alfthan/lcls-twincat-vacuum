@@ -50,19 +50,20 @@ END_VAR
     <Implementation>
       <ST><![CDATA[(* 500 Logarithmic Output Conversion, factory default configuration *)
 {attribute 'obsolete' := 'FB_VCC_NO has been deprecated and is not valid!'}
-rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/32767;
+// Scale the raw terminal count (0..gc_iAdcFullScale) onto the 0..10 V gauge output
+rV := 10*INT_TO_REAL(IG.i_iPRESS_R)/INT_TO_REAL(gc_iAdcFullScale);
 
 (* Set Guage State based on the Analog voltage*)
 IF rV < vDisconnected THEN
     IG.eState := GaugeDisconnected;
     IG.rPRESS := cDefaultPressure;
-ELSIF rV >= vDisconnected AND rV < (vNoDischarge -0.3)  THEN
+ELSIF rV >= vDisconnected AND rV < (vNoDischarge - gc_rGaugeStateBoundaryOffset)  THEN
     IG.eState := Valid;
     IG.rPRESS := LREAL_TO_REAL(EXPT(10,((rV-vBase)/vSlope+LOG(pBase))));
-ELSIF rV >= (vNoDischarge -0.3) AND rV <(vGaugeOff -0.3)   THEN
+ELSIF rV >= (vNoDischarge - gc_rGaugeStateBoundaryOffset) AND rV <(vGaugeOff - gc_rGaugeStateBoundaryOffset)   THEN
     IG.eState := Starting;
     IG.rPRESS := LREAL_TO_REAL(EXPT(10,((rV-vBase)/vSlope+LOG(pBase))));
-ELSIF rV >= (vGaugeOff -0.3) THEN
+ELSIF rV >= (vGaugeOff - gc_rGaugeStateBoundaryOffset) THEN
     IG.eState := Off;
     IG.rPRESS := LREAL_TO_REAL(EXPT(10,((rV-vBase)/vSlope+LOG(pBase))));
 ELSE
