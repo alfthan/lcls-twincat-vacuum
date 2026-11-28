@@ -2,12 +2,17 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PIP_SIP" Id="{474c5979-cc75-4ff6-9f68-7f6209db67bf}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the ION pump connected to a SAES SIP controller.
- Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr *)
+ Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr.
+ The pressure interlock is part of the HV command path at all times: a manual override request
+ (i_xOverrideMode plus stPump.pv_xOvrdStart) is only honored while the interlock is satisfied, is
+ qualified by tOvrd and clears itself after i_tOvrdMaxDuration whatever the interlock state.
+ History: 2026-11-28 - override no longer forces HV enable ahead of the interlock and now expires. *)
 {attribute 'reflection'}
 FUNCTION_BLOCK FB_PIP_SIP Extends FB_Pump
 VAR_INPUT
     i_stGauge	:	ST_VG; //Ion or Pirani gauge for pump interlock
-    i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum interlock logic*)
+    i_xOverrideMode : BOOL; (*To be linked to global override bit. Arms an override request; it never bypasses the pump pressure interlock*)
+    i_tOvrdMaxDuration : TIME := T#10M; (*Maximum time an override request stays active, measured from the request. The override clears on expiry whatever the interlock state*)
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -35,11 +40,16 @@ tOverrideActivated : R_TRIG;
 tPumpStartTimeout : TON := (PT:=T#10s); // Timeout pump start if pressure < 1E-11 for more than 10s.
 MinPressure : REAL:= 1E-11; // Minimum readback pressure, pump must register pressure above this to be considered running
 
+// Interlock
+    xIlkSatisfied : BOOL; // TRUE while the interlock gauge permits HV (valid reading at or below the set point)
+
 //Overrides
     tonOvrd	:	TON;
     tonDelOK : TON;
     rtOK	:	R_TRIG;
     tOvrd	:	TIME := T#10s;
+    tonOvrdMax : TON; // Override duration timer: limits how long an override request stays active
+    rtOvrdBlocked : R_TRIG; // Logs, once per request, that an active override is not honored because the interlock is not satisfied
 
     {attribute 'instance-path'}
     {attribute 'noinit'}
@@ -65,9 +75,13 @@ END_IF
 //stPump.xHV_ExtIlk  := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= stPump.rHVEna_SP);//AND NOT tPumpStartTimeout.Q); //ADP
 
 (* Enable HV *)
-IF i_stGauge.rPRESS <= stPump.rHVEna_SP AND i_stGauge.xPRESS_OK THEN
+(* The pressure interlock is part of the HV command path at all times. The override is only
+   ORed into the command inside the interlock-satisfied branch, so it can never energize the
+   pump while the interlock is not satisfied. *)
+xIlkSatisfied := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= stPump.rHVEna_SP);
+IF xIlkSatisfied THEN
     IF (stPump.xAutoOn) AND NOT (stPump.q_xHVEna_DO) THEN  stPump.q_xHVEna_DO := TRUE;
-    ELSE stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
+    ELSE stPump.q_xHVEna_DO := stPump.xHVEna_SW OR (tonOvrd.Q AND i_xOverrideMode);
     END_IF
     stPump.xILKOk:= TRUE;
 ELSIF stPump.q_xHVEna_DO (*AND timer.Q*) THEN
@@ -76,11 +90,11 @@ ELSIF stPump.q_xHVEna_DO (*AND timer.Q*) THEN
         stPump.xHVEna_SW := FALSE;
         stPump.xILKOk := FALSE;
     ELSE
-        stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
+        // Interlock not satisfied: only the HV switch keeps the running pump on, never the override
+        stPump.q_xHVEna_DO := stPump.xHVEna_SW;
     END_IF
-ELSIF (tonOvrd.Q AND i_xOverrideMode) THEN
-    stPump.q_xHVEna_DO := TRUE;
 ELSE
+    // Interlock not satisfied and the pump is off: HV stays disabled, an override request does not change that
     stPump.q_xHVEna_DO  := FALSE;
     stPump.xHVEna_SW := FALSE;
     stPump.xILKOk := FALSE;
@@ -129,9 +143,17 @@ ACT_Persistent();]]></ST>
     <Action Name="ACT_IlkOverride" Id="{e7687821-df6d-42f8-9e24-aac04a8ab5be}">
       <Implementation>
         <ST><![CDATA[(* Override logic *)
-(* Goal: give ability to override, but do so in a way that people won't forget it.
-Solution: Override only after ten seconds of override, protect against blips,
-when the Pump permission goes true for more than ten seconds consistently, remove override
+(* Goal: give ability to override, but do so in a way that people won't forget it and
+without ever bypassing the pressure interlock.
+Solution:
+- an override request (stPump.pv_xOvrdStart) is honored only after it has been present
+  continuously for tOvrd (qualification time, protects against blips);
+- the override is ORed into the HV command only inside the interlock-satisfied branch of
+  the HV enable logic above, so it never energizes the pump while the interlock is not
+  satisfied - see the 'not honored' log below;
+- the override is removed when the pump permission has been true for ten seconds
+  consistently, and in every case once i_tOvrdMaxDuration has elapsed since the request,
+  whether or not the interlock is satisfied.
 *)
 
 tonDelOK(IN:=stPump.xILKOk, PT:=T#10S);
@@ -144,8 +166,22 @@ IF rtOK.Q AND stPump.pv_xOvrdStart THEN
 END_IF
 // Release the Force DO bit when the system override is false
 IF NOT(i_xOverrideMode) THEN stPump.pv_xOvrdStart :=FALSE; END_IF
-//Override timer
+//Override qualification timer
 tonOvrd(IN:= stPump.pv_xOvrdStart, PT:=tOvrd);
+//Override duration limit: the request self-clears after i_tOvrdMaxDuration, whatever the
+//interlock state, so an override can never stay active indefinitely
+tonOvrdMax(IN:= stPump.pv_xOvrdStart, PT:=i_tOvrdMaxDuration);
+IF tonOvrdMax.Q THEN
+    stPump.pv_xOvrdStart := FALSE;
+    //Hand over to the HV switch (seamless transition) only when the interlock permits HV
+    IF (stPump.eState = pumpRUNNING) AND xIlkSatisfied THEN stPump.xHVEna_SW := TRUE; END_IF
+    fbLogger(sMsg:='Override expired after maximum override duration', eSevr:=TcEventSeverity.Warning);
+END_IF
+//Warn once per request when an active override cannot be honored because the interlock is not satisfied
+rtOvrdBlocked(CLK:= tonOvrd.Q AND i_xOverrideMode AND NOT xIlkSatisfied);
+IF rtOvrdBlocked.Q THEN
+    fbLogger(sMsg:='Override request not honored: pump interlock is not satisfied.', eSevr:=TcEventSeverity.Warning);
+END_IF
 ]]></ST>
       </Implementation>
     </Action>

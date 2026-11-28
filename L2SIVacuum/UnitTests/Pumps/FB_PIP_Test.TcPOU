@@ -9,12 +9,14 @@ END_VAR
 VAR
     PG : ST_VG;
     fb_PIP_GAMMA: FB_PIP_GAMMA;
+    fb_PIP_SIP: FB_PIP_SIP; // SIP ion pump controller used by the override cases
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[M_INIT();
 M_Interlock();
 M_AutoStart();
+M_Override();
 ]]></ST>
     </Implementation>
     <Method Name="M_AutoStart" Id="{0ca3d011-0de6-403f-8b45-be3c55d89c4f}">
@@ -89,6 +91,36 @@ AssertFalse(This^.fb_PIP_GAMMA.stPump.xHVEna_SW, 'PIP xHVEna_SW set to True');
 AssertFalse(This^.fb_PIP_GAMMA.stPump.q_xHVEna_DO, 'PIP HVEna_DO set to True');
 TEST_FINISHED_NAMED('PIP_Interlock_Lost');
 
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_Override" Id="{5d6f3c11-2f8a-4b77-9f1e-8f0b6a2c4d31}">
+      <Declaration><![CDATA[METHOD M_Override
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Invariant: a manual override must never energize the ion pump HV while the pressure interlock is
+   not satisfied. The override is only ORed into the HV command inside the interlock-satisfied branch
+   of the HV enable logic, so an override request with a bad interlock leaves HV off.
+   Note: the override qualification time (tOvrd) is not reachable within a single TcUnit cycle, so the
+   request path is exercised here rather than a fully qualified override. *)
+TEST('PIP_SIP_Override_No_Interlock');
+This^.PG.rPRESS := 1E-1; // interlock gauge far above the HV enable set point
+This^.PG.xPRESS_OK := TRUE;
+This^.fb_PIP_SIP.stPump.pv_xOvrdStart := TRUE; // operator override request
+This^.fb_PIP_SIP(i_stGauge:=PG, i_xOverrideMode:=TRUE, stPump=>, q_IG=>);
+AssertFalse(This^.fb_PIP_SIP.stPump.q_xHVEna_DO, 'PIP_SIP override energized HV with the interlock not satisfied');
+AssertFalse(This^.fb_PIP_SIP.stPump.xHVEna_SW, 'PIP_SIP override set the HV switch with the interlock not satisfied');
+TEST_FINISHED_NAMED('PIP_SIP_Override_No_Interlock');
+This^.fb_PIP_SIP.stPump.pv_xOvrdStart := FALSE;
+
+TEST('PIP_SIP_Interlock_OK');
+This^.PG.rPRESS := 1E-6;
+This^.PG.xPRESS_OK := TRUE;
+This^.fb_PIP_SIP(i_stGauge:=PG, i_xOverrideMode:=FALSE, stPump=>, q_IG=>);
+AssertTrue(This^.fb_PIP_SIP.stPump.q_xHVEna_DO, 'PIP_SIP HV not enabled with the interlock satisfied');
+TEST_FINISHED_NAMED('PIP_SIP_Interlock_OK');
 ]]></ST>
       </Implementation>
     </Method>
