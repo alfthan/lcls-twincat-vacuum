@@ -12,8 +12,13 @@ VAR_INPUT
     b937A :BOOL := FALSE; // True if this gauge is connected to MKS937A controller, False if connected to MKS937B controller
 END_VAR
 VAR_OUTPUT
+    (* Gauge interface struct published to EPICS. The ST_VG members carry the
+       individual PV names, io directions and metadata; the pragma below supplies
+       the MKS317 type prefix so the records are published as VG:MKS317:<MEMBER>,
+       preceded by the instance prefix set in the consuming PLC project. *)
     {attribute 'pytmc' := '
-    pv:
+    pv: VG:MKS317
+    io: i
     '}
     PG : ST_VG;
 END_VAR
