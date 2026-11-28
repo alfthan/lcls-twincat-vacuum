@@ -18,8 +18,19 @@ VAR_INPUT
     i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
 END_VAR
 VAR_OUTPUT
+    (* EPICS-facing command/status interface of the dual acting valve.
+       Records publish as <instance prefix>:VRC_DA:<member>, e.g.
+       XCS:VAC:VRC:01:VRC_DA:CLS_SW. The type based segment keeps the
+       records of a dual acting VRC distinct from the other valve types
+       (single acting VRC, VGC, VCN), which reuse the same member names.
+       Every ST_VRC_NO / ST_ValveBase member carries its own record name
+       (OPN_SW, CLS_SW, CLS_DO, FORCE_CLS, POS_STATE, STATE, ERROR, ...)
+       and its own io direction plus ZNAM/ONAM metadata. The io: io
+       declared here is the default for this container, which carries
+       EPICS commands as well as readbacks; a member's own io still wins. *)
     {attribute 'pytmc' := '
-    pv:
+    pv: VRC_DA
+    io: io
     '}
     iq_stValve : ST_VRC_NO;
 END_VAR
