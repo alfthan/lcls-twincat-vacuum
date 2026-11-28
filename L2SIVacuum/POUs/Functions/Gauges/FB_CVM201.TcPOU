@@ -4,6 +4,8 @@
     <Declaration><![CDATA[(* This function block is used to provide protection and automatic turn on of ion gauges,
  it also manages the turn on of the AT_VAC boolean, and checks to make sure the pressure is good *)
 (* For CVM 201  convectron SuperBee*)
+(* The gauge calibration curve, the analog input bit span and the default setpoint
+ are hardware dependent and are declared in GVL_CVM201Parameters *)
 {attribute 'no_check'}
 FUNCTION_BLOCK FB_CVM201 EXTENDS FB_GaugeBase
 VAR_IN_OUT
@@ -20,7 +22,7 @@ VAR_OUTPUT
 END_VAR
 VAR
     V : REAL;
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
+    iTermBits: UINT := gc_iTermBitsDefault ; // The terminal's maximum value in bits, see GVL_CVM201Parameters
     Vlowest: REAL := 10;
     (*IO*)
     i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
@@ -32,21 +34,21 @@ VAR CONSTANT
     rValidLoBoundary	:	REAL := 0.375; //  0.375V as per manual page 27
     rValidHiBoundary	:	REAL := 5.659;// 5.534; // manual page 27
     rDisconnectedBoundary	:	REAL := 0.3;
-    (*Default set point 50 mT*)
-    rDefaultVAC_SP: REAL := 5E-2;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block is used to provide protection and automatic turn on of ion gauges,
  it also manages the turn on of the AT_VAC boolean, and checks to make sure the pressure is good *)
-(* For MKS 275 mini-convectron *)
+(* Gauge calibration and scaling constants: see GVL_CVM201Parameters *)
 
-//Default setpoint 50 mT
+//Default setpoint, from GVL_CVM201Parameters
 IF PG.rVAC_SP = 0 THEN
-    PG.rVAC_SP := 5E-2;
+    PG.rVAC_SP := gc_rDefaultVAC_SP;
 END_IF
 
 (* Real-value calculation *)
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
+IF (iTermBits = 0) THEN
+    iTermBits := gc_iTermBitsDefault;
+END_IF
 V := 10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
 
 Vlowest := MIN(V, Vlowest);
@@ -55,20 +57,32 @@ IF V > rDisconnectedBoundary AND V < rValidLoBoundary  THEN
     PG.rPRESS := MinPressure;
     PG.eState := ValidLo;
 
-ELSIF V >= rValidLoBoundary AND V < rValidLoBoundary +rDeadband  THEN
-    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( -0.02585 + 0.03767*V + 0.04563*EXPT(V,2)+ 0.1151*EXPT(V,3) - 0.04158*EXPT(V,4)+ 0.008737*EXPT(V,5)) );
+ELSIF V >= rValidLoBoundary AND V < rValidLoBoundary + rDeadband  THEN
+    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( gc_rLoPolyC0
+                                               + gc_rLoPolyC1*V
+                                               + gc_rLoPolyC2*EXPT(V,2)
+                                               + gc_rLoPolyC3*EXPT(V,3)
+                                               + gc_rLoPolyC4*EXPT(V,4)
+                                               + gc_rLoPolyC5*EXPT(V,5) ) );
     PG.eState := ValidLo;
 
-ELSIF V >= rValidLoBoundary AND V < 2.842 THEN
-    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( -0.02585 + 0.03767*V + 0.04563*EXPT(V,2)+ 0.1151*EXPT(V,3) - 0.04158*EXPT(V,4)+ 0.008737*EXPT(V,5)) );
+ELSIF V >= rValidLoBoundary AND V < gc_rCurveVoltLo THEN
+    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( gc_rLoPolyC0
+                                               + gc_rLoPolyC1*V
+                                               + gc_rLoPolyC2*EXPT(V,2)
+                                               + gc_rLoPolyC3*EXPT(V,3)
+                                               + gc_rLoPolyC4*EXPT(V,4)
+                                               + gc_rLoPolyC5*EXPT(V,5) ) );
     PG.eState := Valid;
 
-ELSIF V >= 2.842 AND V < 4.945 THEN
-    PG.rPRESS := LREAL_TO_REAL((0.1031-0.02322*V+0.07229*EXPT(V,2))/(1-0.3986*V+0.07438*EXPT(V,2)-0.006866*EXPT(V,3)));
+ELSIF V >= gc_rCurveVoltLo AND V < gc_rCurveVoltHi THEN
+    PG.rPRESS := LREAL_TO_REAL( ( gc_rMidNumC0 + gc_rMidNumC1*V + gc_rMidNumC2*EXPT(V,2) )
+                              / ( gc_rMidDenC0 + gc_rMidDenC1*V + gc_rMidDenC2*EXPT(V,2) + gc_rMidDenC3*EXPT(V,3) ) );
     PG.eState := Valid;
 
-ELSIF V >= 4.945 AND V < rValidHiBoundary THEN
-    PG.rPRESS := LREAL_TO_REAL((100.624-20.5623*V)/(1-0.37679*V+0.0348656*EXPT(V,2)));
+ELSIF V >= gc_rCurveVoltHi AND V < rValidHiBoundary THEN
+    PG.rPRESS := LREAL_TO_REAL( ( gc_rHiNumC0 + gc_rHiNumC1*V )
+                              / ( gc_rHiDenC0 + gc_rHiDenC1*V + gc_rHiDenC2*EXPT(V,2) ) );
     PG.eState := ValidHi;
 
 ELSIF V <= rDisconnectedBoundary THEN

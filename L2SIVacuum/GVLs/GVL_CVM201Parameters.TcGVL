@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="GVL_CVM201Parameters" Id="{a3f5c1d2-6b47-4e88-9c05-7d1e2b4f6a83}">
+    <Declaration><![CDATA[VAR_GLOBAL CONSTANT
+    (*
+    Hardware dependent scaling and calibration values for the CVM201 (SuperBee)
+    convectron gauge, referenced by FB_CVM201.
+    The pressure conversion curve is taken from the CVM201 manual (page 9 and
+    page 27) and the full scale bit span from the analog input terminal, so a
+    terminal swap or a calibration change is made here and not in the
+    conversion logic. The piecewise curve uses the voltage break points below:
+        V < gc_rCurveVoltLo                     : low range polynomial
+        gc_rCurveVoltLo <= V < gc_rCurveVoltHi   : mid range rational function
+        gc_rCurveVoltHi <= V                    : high range rational function
+    *)
+    gc_iTermBitsDefault : UINT := 32767; // Full scale of a 16 bit analog input terminal [bits]
+    gc_rDefaultVAC_SP   : REAL := 5E-2; // Default vacuum setpoint [Torr], 50 mTorr
+    gc_rCurveVoltLo     : REAL := 2.842; // Low/mid range break point of the calibration curve [V]
+    gc_rCurveVoltHi     : REAL := 4.945; // Mid/high range break point of the calibration curve [V]
+    (* Low range, p = c0 + c1*V + c2*V^2 + c3*V^3 + c4*V^4 + c5*V^5 [Torr] *)
+    gc_rLoPolyC0 : REAL := -0.02585; // constant term
+    gc_rLoPolyC1 : REAL := 0.03767; // V^1 coefficient
+    gc_rLoPolyC2 : REAL := 0.04563; // V^2 coefficient
+    gc_rLoPolyC3 : REAL := 0.1151; // V^3 coefficient
+    gc_rLoPolyC4 : REAL := -0.04158; // V^4 coefficient
+    gc_rLoPolyC5 : REAL := 0.008737; // V^5 coefficient
+    (* Mid range, p = (n0 + n1*V + n2*V^2) / (d0 + d1*V + d2*V^2 + d3*V^3) [Torr] *)
+    gc_rMidNumC0 : REAL := 0.1031; // numerator constant term
+    gc_rMidNumC1 : REAL := -0.02322; // numerator V^1 coefficient
+    gc_rMidNumC2 : REAL := 0.07229; // numerator V^2 coefficient
+    gc_rMidDenC0 : REAL := 1.0; // denominator constant term
+    gc_rMidDenC1 : REAL := -0.3986; // denominator V^1 coefficient
+    gc_rMidDenC2 : REAL := 0.07438; // denominator V^2 coefficient
+    gc_rMidDenC3 : REAL := -0.006866; // denominator V^3 coefficient
+    (* High range, p = (n0 + n1*V) / (d0 + d1*V + d2*V^2) [Torr] *)
+    gc_rHiNumC0 : REAL := 100.624; // numerator constant term
+    gc_rHiNumC1 : REAL := -20.5623; // numerator V^1 coefficient
+    gc_rHiDenC0 : REAL := 1.0; // denominator constant term
+    gc_rHiDenC1 : REAL := -0.37679; // denominator V^1 coefficient
+    gc_rHiDenC2 : REAL := 0.0348656; // denominator V^2 coefficient
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>
