@@ -1,7 +1,19 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_Pump" Id="{00c4f02d-0992-44f0-9021-57d8126c2097}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_Pump
+    <Declaration><![CDATA[(* Base function block for every vacuum pump.
+   Owns the behaviour all pumps share: the diagnostic logger instance, the previous-state and edge
+   detection the concrete pump blocks use, the persistent setpoint storage and the validation of
+   requested pressure setpoints. Concrete pump blocks extend it and call ACT_Logger and
+   ACT_Persistent from their own implementation.
+   Objectives:
+   - one place for shared pump diagnostics, persistent data plumbing and setpoint validation
+   Usage:
+   - extend this block (FUNCTION_BLOCK FB_xxx EXTENDS FB_Pump); do not instantiate it directly
+   History:
+   2026-11-28  taio-generic-0: header comment added and M_ValidatePressureSP added so a requested
+               pressure setpoint is validated before it reaches a pump (audit finding #1207). *)
+FUNCTION_BLOCK FB_Pump
 VAR
     // For logging
     fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.VACUUM);
@@ -26,5 +38,71 @@ END_VAR
         <ST><![CDATA[]]></ST>
       </Implementation>
     </Action>
+    <Method Name="M_ValidatePressureSP" Id="{537f7400-4feb-4231-96ed-057d866b02d3}">
+      <Declaration><![CDATA[(* Validates a requested pressure setpoint and only lets a usable value through.
+   The request is checked against the configured limits of the pump and against the vendor's physical
+   span (gc_rPumpPressureSPMin / gc_rPumpPressureSPMax). A value outside the resulting range is clamped
+   into it and logged as a warning; a value that is not a number, or a request that cannot be validated
+   because the configured limits are inverted, is rejected and logged as an error.
+   io_rSetpoint is written only when the request is accepted, so a rejected request leaves the previous
+   setpoint in place and nothing unusable reaches the pump.
+   Returns TRUE when the request was accepted (possibly clamped), FALSE when it was rejected.
+   Usage: call it from the setpoint setter of a concrete pump block, passing the pump interface struct
+   member as io_rSetpoint, and from the cyclic persistence action to keep an EPICS-writable member in range.
+   History:
+   2026-11-28  taio-generic-0: created for audit finding #1207 (validated pressure setpoint setters). *)
+METHOD PROTECTED M_ValidatePressureSP : BOOL
+VAR_INPUT
+    i_rRequested : REAL;        // Requested setpoint, TORR
+    i_rConfigMin : REAL;        // Configured lower limit of this setpoint, TORR
+    i_rConfigMax : REAL;        // Configured upper limit of this setpoint, TORR
+    i_sSpName : T_MaxString;    // Setpoint name used in the diagnostic message
+END_VAR
+VAR_IN_OUT
+    io_rSetpoint : REAL;        // Setpoint of the device interface struct; written only when accepted
+END_VAR
+VAR
+    rMin : REAL;                // Effective lower limit: configured limit kept inside the vendor span, TORR
+    rMax : REAL;                // Effective upper limit: configured limit kept inside the vendor span, TORR
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Effective limits: the configured limit, kept inside the vendor's physical span *)
+rMin := MAX(i_rConfigMin, gc_rPumpPressureSPMin);
+rMax := MIN(i_rConfigMax, gc_rPumpPressureSPMax);
+
+(* A limit pair that leaves no valid range cannot validate anything: reject and report the configuration *)
+IF rMax < rMin THEN
+    fbLogger(sMsg := CONCAT(i_sSpName, ' setpoint rejected: the configured limits are inverted.'),
+             eSevr := TcEventSeverity.Error);
+    M_ValidatePressureSP := FALSE;
+    RETURN;
+END_IF
+
+IF i_rRequested > rMax THEN
+    (* Above the limits: clamp into the valid range, then report *)
+    io_rSetpoint := rMax;
+    fbLogger(sMsg := CONCAT(i_sSpName, ' setpoint clamped to the upper limit.'),
+             eSevr := TcEventSeverity.Warning);
+    M_ValidatePressureSP := TRUE;
+ELSIF i_rRequested < rMin THEN
+    (* Below the limits: clamp into the valid range, then report *)
+    io_rSetpoint := rMin;
+    fbLogger(sMsg := CONCAT(i_sSpName, ' setpoint clamped to the lower limit.'),
+             eSevr := TcEventSeverity.Warning);
+    M_ValidatePressureSP := TRUE;
+ELSIF (i_rRequested >= rMin) AND (i_rRequested <= rMax) THEN
+    (* In range: accept the request as it was made *)
+    io_rSetpoint := i_rRequested;
+    M_ValidatePressureSP := TRUE;
+ELSE
+    (* Not above, below or inside the limits, so the request is not a number (NaN). Reject it and
+       leave the previous setpoint in place so that nothing unusable is persisted or sent to the pump *)
+    fbLogger(sMsg := CONCAT(i_sSpName, ' setpoint rejected: the requested value is not a number.'),
+             eSevr := TcEventSeverity.Error);
+    M_ValidatePressureSP := FALSE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
   </POU>
 </TcPlcObject>

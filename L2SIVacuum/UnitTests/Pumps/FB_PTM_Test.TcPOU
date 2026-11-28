@@ -9,6 +9,7 @@ END_VAR
 VAR
     fb_TwisTorr: FB_PTM_TwisTorr;
     fb_PTM_Ebara_010M:FB_PTM_Ebara_010M;
+    fb_Pfeiffer: FB_PTM_Pfeiffer; // Pump block whose validated setpoint setters are tested
 
     cycle:INT :=0;
     (*IO*)
@@ -25,6 +26,7 @@ END_VAR
       <ST><![CDATA[M_INIT();
 M_Interlock();
 M_PTM_EBARA();
+M_ValidatedSetpoint();
 cycle:=cycle+1;]]></ST>
     </Implementation>
     <Method Name="M_INIT" Id="{09056c01-bd86-4734-bc9b-0823ada814a0}">
@@ -128,6 +130,46 @@ IF( cycle = 10) THEN
 
 
 End_IF;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ValidatedSetpoint" Id="{470c9421-f0d0-4922-8b92-3da3a91e2b02}">
+      <Declaration><![CDATA[(* Exercises the validated setpoint setters of FB_PTM_Pfeiffer: a request above the
+   configured backing pressure limit has to be clamped to that limit before it reaches the pump
+   interface struct, and has to be reported as accepted.
+   History:
+   2026-11-28  taio-generic-0: created for audit finding #1207 (validated pressure setpoint setters). *)
+METHOD M_ValidatedSetpoint
+VAR
+    Expected : REAL;   // Expected setpoint after validation, TORR
+    Actual : REAL;     // Setpoint the pump interface struct holds, TORR
+    xAccepted : BOOL;  // TRUE when the setter accepted the request
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('PTM_Pfeiffer_SetBackingSP_Clamped');
+(* The configured limit is tighter than the requested value, so the request has to be clamped to it *)
+fb_Pfeiffer(i_xExtILKOk := TRUE, i_rMaxBackingPressure := 1.0, iq_stPTM => );
+xAccepted := fb_Pfeiffer.M_SetBackingSP(i_fBackingPressureSP := 5.0);
+fb_Pfeiffer(i_xExtILKOk := TRUE, i_rMaxBackingPressure := 1.0, iq_stPTM => );
+IF( cycle = 3) THEN
+    Expected := 1.0;
+    Actual := fb_Pfeiffer.iq_stPTM.rBackingPressureSP;
+    AssertEquals_REAL(Expected, Actual, 0.001, 'PTM Pfeiffer backing SP was not clamped to the configured limit');
+    AssertTrue(xAccepted, 'PTM Pfeiffer clamped backing SP was not reported as accepted');
+    TEST_FINISHED_NAMED('PTM_Pfeiffer_SetBackingSP_Clamped');
+END_IF
+
+TEST('PTM_Pfeiffer_SetForelineSP_Clamped');
+(* The same validation applies to the foreline setpoint *)
+xAccepted := fb_Pfeiffer.M_SetForelineSP(i_fForelinePressureSP := 5.0);
+fb_Pfeiffer(i_xExtILKOk := TRUE, i_rMaxForelinePressure := 0.5, iq_stPTM => );
+IF( cycle = 3) THEN
+    Expected := 0.5;
+    Actual := fb_Pfeiffer.iq_stPTM.rForelineSP;
+    AssertEquals_REAL(Expected, Actual, 0.001, 'PTM Pfeiffer foreline SP was not clamped to the configured limit');
+    AssertTrue(xAccepted, 'PTM Pfeiffer clamped foreline SP was not reported as accepted');
+    TEST_FINISHED_NAMED('PTM_Pfeiffer_SetForelineSP_Clamped');
+END_IF]]></ST>
       </Implementation>
     </Method>
   </POU>

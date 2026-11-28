@@ -4,6 +4,14 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Pressure setpoint limits, TORR. The span is the vendor span published by the BP_SP / IP_SP
+       pytmc pragmas of ST_PTM (LOPR 0 / HOPR 1000); the configured caps are the defaults a pump
+       function block applies to its pressure setpoints until a site tightens them per instance. *)
+    gc_rPumpPressureSPMin : REAL := 0.0;            // Lowest pressure setpoint a pump accepts, TORR
+    gc_rPumpPressureSPMax : REAL := 1000.0;         // Highest pressure setpoint a pump accepts, TORR
+    gc_rPumpBackingPressureSPMax : REAL := 3.0;     // Default configured cap on the backing pressure setpoint, TORR
+    gc_rPumpForelinePressureSPMax : REAL := 3.0;    // Default configured cap on the foreline pressure setpoint, TORR
 END_VAR
 ]]></Declaration>
   </GVL>

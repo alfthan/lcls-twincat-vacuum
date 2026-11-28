@@ -7,6 +7,12 @@
 FUNCTION_BLOCK FB_PTM_TurboDrive EXTENDS FB_Pump
 VAR_INPUT
     i_xExtILKOk : BOOL; // Connect to external interlock logic, TRUE if not used.
+    // Configured limits of the pressure setpoints, TORR. The setters clamp or reject against these
+    // limits and never against anything outside the vendor span declared in Constants.
+    i_rMinBackingPressure : REAL := gc_rPumpPressureSPMin;          // Configured lower limit, backing pressure
+    i_rMaxBackingPressure : REAL := gc_rPumpBackingPressureSPMax;   // Configured upper limit, backing pressure
+    i_rMinForelinePressure : REAL := gc_rPumpPressureSPMin;         // Configured lower limit, foreline pressure
+    i_rMaxForelinePressure : REAL := gc_rPumpForelinePressureSPMax; // Configured upper limit, foreline pressure
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -16,6 +22,10 @@ VAR_OUTPUT
 END_VAR
 VAR
 
+    // Scratch for the cyclic validation of the EPICS-writable backing pressure setpoint
+    rBackingSPRequest : REAL;   // Backing pressure setpoint read from the pump interface struct, TORR
+    rBackingSPValidated : REAL; // Backing pressure setpoint accepted by M_ValidatePressureSP, TORR
+    xBackingSPValid : BOOL;     // TRUE when M_ValidatePressureSP accepted the backing pressure setpoint
     xRunOk	:	BOOL;
     tofRemoteDelay	:	TOF;
 
@@ -128,6 +138,22 @@ IF (SUPER^.bRestorePersistentData) THEN
         iq_stPTM.rInletPressureSP := rInletPressureSP;
     END_IF;
 END_IF
+(*The backing pressure setpoint of the interface struct is also writable from EPICS, so validate the
+  struct value before it is persisted or handed on to the pump*)
+rBackingSPRequest := iq_stPTM.rBackingPressureSP;
+xBackingSPValid := M_ValidatePressureSP(
+    i_rRequested := rBackingSPRequest,
+    i_rConfigMin := i_rMinBackingPressure,
+    i_rConfigMax := i_rMaxBackingPressure,
+    i_sSpName := 'backing pressure',
+    io_rSetpoint := rBackingSPValidated);
+IF xBackingSPValid THEN
+    iq_stPTM.rBackingPressureSP := rBackingSPValidated;
+ELSE
+    (* An unusable value must not stay in the interface struct either (a value persisted before the
+       validation existed): fall back to the configured lower limit, the safe direction for the pump *)
+    iq_stPTM.rBackingPressureSP := i_rMinBackingPressure;
+END_IF
 (*Check if a new value has been written in the structure variable copy it to the persistent variable*)
 IF NOT (iq_stPTM.rBackingPressureSP = rBackingPressureSP) THEN
     rBackingPressureSP:= iq_stPTM.rBackingPressureSP;
@@ -180,23 +206,43 @@ iq_stPTM.i_xWarn := i_st_TD20_RBK.wStatusWord.14; (* warning summary bit *)
       </Implementation>
     </Method>
     <Method Name="M_SetBackingSP" Id="{6e065065-68e3-4f57-924c-8e7bfc981276}">
-      <Declaration><![CDATA[METHOD PUBLIC M_SetBackingSP
+      <Declaration><![CDATA[(* Writes the requested backing pressure setpoint into the pump interface struct, but only after
+   M_ValidatePressureSP has checked it against the configured limits and the vendor's physical span:
+   an out-of-range request is clamped and logged, a request that is not a number is rejected and the
+   previous setpoint is kept, so no unusable value is persisted or sent to the pump.
+   Returns TRUE when the request was accepted (possibly clamped), FALSE when it was rejected. *)
+METHOD PUBLIC M_SetBackingSP : BOOL
 VAR_INPUT
-    i_fBackingPressureSP : REAL;
+    i_fBackingPressureSP : REAL;    // Requested backing pressure setpoint, TORR
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[iq_stPtm.rBackingPressureSP := i_fBackingPressureSP;]]></ST>
+        <ST><![CDATA[M_SetBackingSP := M_ValidatePressureSP(
+    i_rRequested := i_fBackingPressureSP,
+    i_rConfigMin := i_rMinBackingPressure,
+    i_rConfigMax := i_rMaxBackingPressure,
+    i_sSpName := 'backing pressure',
+    io_rSetpoint := iq_stPtm.rBackingPressureSP);]]></ST>
       </Implementation>
     </Method>
     <Method Name="M_SetForelineSP" Id="{f4ff84d2-f083-48f5-8918-754ad96e89ec}">
-      <Declaration><![CDATA[METHOD PUBLIC M_SetForelineSP
+      <Declaration><![CDATA[(* Writes the requested foreline pressure setpoint into the pump interface struct, but only after
+   M_ValidatePressureSP has checked it against the configured limits and the vendor's physical span:
+   an out-of-range request is clamped and logged, a request that is not a number is rejected and the
+   previous setpoint is kept, so no unusable value is persisted or sent to the pump.
+   Returns TRUE when the request was accepted (possibly clamped), FALSE when it was rejected. *)
+METHOD PUBLIC M_SetForelineSP : BOOL
 VAR_INPUT
-    i_fForelinePressureSP : REAL;
+    i_fForelinePressureSP : REAL;    // Requested foreline pressure setpoint, TORR
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[iq_stPtm.rForelineSP := i_fForelinePressureSP;]]></ST>
+        <ST><![CDATA[M_SetForelineSP := M_ValidatePressureSP(
+    i_rRequested := i_fForelinePressureSP,
+    i_rConfigMin := i_rMinForelinePressure,
+    i_rConfigMax := i_rMaxForelinePressure,
+    i_sSpName := 'foreline pressure',
+    io_rSetpoint := iq_stPtm.rForelineSP);]]></ST>
       </Implementation>
     </Method>
   </POU>
