@@ -6,8 +6,19 @@ FUNCTION_BLOCK FB_CMR362
 VAR_INPUT
 END_VAR
 VAR_OUTPUT
-        {attribute 'pytmc' := 'pv:'}
-        PG : ST_VG;
+    (* Gauge interface struct published to EPICS as VG:CMR362:<MEMBER>, e.g.
+       <instance prefix>:VG:CMR362:PRESS. The type-based prefix keeps the
+       CMR 362 records distinct from the other gauge types; every ST_VG
+       member then supplies its own record name (PRESS, AT_VAC, PRESS_OK,
+       STATE, HV_SW, ...) together with its io direction and ZNAM/ONAM/EGU
+       metadata. The io: io default declared here reflects that this
+       interface carries EPICS commands as well as readbacks; a member's own
+       io still wins. *)
+    {attribute 'pytmc' := '
+    pv: VG:CMR362
+    io: io
+    '}
+    PG : ST_VG;
 END_VAR
 VAR
     MinPressure: REAL := 7.5E-3; //Torr
