@@ -2,7 +2,12 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PIP_Gamma" Id="{c735b214-fb8d-491c-9d35-e2f8609cfbf0}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the ION pump connected to a Gamma QPCe controller.
- Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr *)
+ Provides interlocking interface. Enable HV only when interlock gauge press is less than 1.0E-4 Torr.
+ Objectives: command the HV enable output only while the interlock permits it, and hold that
+ output de-energized on a pump-start timeout fault until the caller retries from a safe state.
+ History: 2026-11-28 - latched the pump-start timeout fault (xStartTimeoutFault) and forced
+                       q_xHVEna_DO/xHVEna_SW FALSE on the same scan; later scans no longer
+                       reassert the HV command while faulted (#1001). *)
 {attribute 'reflection'}
 FUNCTION_BLOCK FB_PIP_Gamma Extends FB_Pump
 VAR_INPUT
@@ -29,11 +34,12 @@ VAR
  i_xSP_DI  AT %I* : BOOL; // NO contact //function of relay set on the QPC to HV output state
 
 // For logging
-tTimeOutAction : F_TRIG;
+tTimeOutAction : R_TRIG; // Rising edge of tPumpStartTimeout.Q: the start timeout has expired
 tOverrideActivated : R_TRIG;
 
 tPumpStartTimeout : TON := (PT:=T#10s); // Timeout pump start if pressure < 1E-11 for more than 10s.
 MinPressure : REAL:= 1E-11; // Minimum readback pressure, pump must register pressure above this to be considered running
+xStartTimeoutFault : BOOL; // Latched pump-start timeout fault: while TRUE the HV command and the physical HV output are held de-energized
 stateTimer:TON;
 //Overrides
     tonOvrd	:	TON;
@@ -70,8 +76,33 @@ END_IF
 (* Interlock *)
 //stPump.xHV_ExtIlk  := i_stGauge.xPRESS_OK AND (i_stGauge.rPRESS <= stPump.rHVEna_SP);//AND NOT tPumpStartTimeout.Q); //ADP
 
-(* Enable HV *)
-IF i_stGauge.rPRESS <= stPump.rHVEna_SP AND i_stGauge.xPRESS_OK THEN
+(* Pump start timeout. HV has been commanded (q_xHVEna_DO) for tPumpStartTimeout.PT without the
+   HV readback (i_xHV_DI) asserting. Evaluated before the HV enable logic so an expired start
+   takes effect on the same scan instead of leaving the HV command set for one more cycle. *)
+tPumpStartTimeout(IN:=(NOT stPump.i_xHV_DI AND stPump.q_xHVEna_DO));
+tTimeOutAction(CLK:=tPumpStartTimeout.Q);
+IF tTimeOutAction.Q THEN
+    xStartTimeoutFault := TRUE;
+    fbLogger(sMsg:='Pump time out.', eSevr:=TcEventSeverity.Critical);
+END_IF
+
+(* The latched start-timeout fault clears only from a known-safe state: the caller has to ask
+   for HV again (xHVEna_SW, which the fault path below drops) with the interlock pressure inside
+   the protection setpoint. Dropping the command on its own never clears the fault. *)
+IF xStartTimeoutFault AND stPump.xHVEna_SW AND i_stGauge.xPRESS_OK
+   AND (i_stGauge.rPRESS <= stPump.rHVEna_SP) AND NOT tPumpStartTimeout.Q THEN
+    xStartTimeoutFault := FALSE;
+    fbLogger(sMsg:='Pump start timeout acknowledged, HV retry permitted.', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+(* Enable HV. While the start-timeout fault is latched the HV command, the HV switch and the
+   interlock-ok bit are all forced FALSE before the output is mapped, so neither this scan nor
+   a later one can reassert the HV command from the interlock or override terms. *)
+IF xStartTimeoutFault THEN
+    stPump.q_xHVEna_DO := FALSE;
+    stPump.xHVEna_SW := FALSE;
+    stPump.xILKOk := FALSE;
+ELSIF i_stGauge.rPRESS <= stPump.rHVEna_SP AND i_stGauge.xPRESS_OK THEN
     stPump.q_xHVEna_DO := stPump.xHVEna_SW OR ((tonOvrd.Q AND i_xOverrideMode));
     stPump.xILKOk:= TRUE;
 ELSIF stPump.q_xHVEna_DO (*AND timer.Q*) THEN
@@ -96,15 +127,8 @@ END_IF
 
 timer(IN:= NOT stPump.q_xHVEna_DO, PT:= T#1s);
 
-// TAW Experimental ion pump timeout
-tPumpStartTimeout(IN:=(NOT stPump.i_xHV_DI AND stPump.q_xHVEna_DO));
-tTimeOutAction(CLK:=tPumpStartTimeout.Q);
-IF tTimeOutAction.Q THEN  fbLogger(sMsg:='Pump time out.', eSevr:=TcEventSeverity.Critical); END_IF
-
-
-
 (*Pump STATE*)
-IF tPumpStartTimeout.Q THEN //Pump timeout
+IF xStartTimeoutFault THEN //Latched pump start timeout: report the fault while de-energized
     stPump.eState := pumpFAULT;
 ELSIF stPump.q_xHVEna_DO AND NOT stPump.i_xHV_DI THEN
     stPump.eState := pumpSTARTING;

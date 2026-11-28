@@ -2,7 +2,12 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_MagDriveDigital" Id="{50197c8d-2497-4812-a680-acd70b819f81}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Leybold connected to the MagDriveDigital Controller.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+ Objectives: run/stop the pump under an external interlock permit and keep every physical output
+ in its de-energized state on a fault or whenever the pump is not actively commanded.
+ History: 2015-07-15 A. Wallace - original.
+          2026-11-28 - q_xRemote no longer carries a 5 s off-delay: it follows q_RunDO so the
+                       remote output de-energizes on the same scan as a fault or stop (#1217). *)
 FUNCTION_BLOCK FB_PTM_MagDriveDigital EXTENDS FB_Pump
 VAR_IN_OUT
 
@@ -19,8 +24,6 @@ VAR_OUTPUT
 END_VAR
 VAR
     xRunOk	:	BOOL;
-    tofRemoteDelay	:	TOF;
-
 
     (*IO*)
     i_xAtSpd AT%I*: BOOL; // Normaml operation when true
@@ -37,10 +40,6 @@ END_VAR
       <ST><![CDATA[(* Basic MagDrive Digital Turbo Controls *)
 (* A. Wallace, 2015-7-15 *)
 
-tofRemoteDelay(IN:=iq_stPtm.q_RunDO, PT:=T#5S);
-
-iq_stPtm.q_xRemote := tofRemoteDelay.Q;
-
 (* Interlock Sum *)
 iq_stPtm.xExtRunOk:= i_xExtILKOk;
 xRunOk := iq_stPtm.xExtRunOk AND NOT iq_stPtm.i_xFault;
@@ -52,6 +51,12 @@ ELSE
     iq_stPtm.xRunSW:=FALSE;
     iq_stPtm.q_RunDO:=FALSE;
 END_IF
+
+(* Remote enable. The controller is held in remote control only while the pump is actually
+   commanded to run. Deriving q_xRemote straight from q_RunDO (no off-delay) means a fault,
+   a stop or a lost interlock de-energizes the physical remote output on the same scan, and
+   later scans cannot reassert it because q_RunDO is gated on xRunOk above. *)
+iq_stPtm.q_xRemote := iq_stPtm.q_RunDO;
 
 (*Pump STATE*)
 IF iq_stPtm.i_xFault THEN
