@@ -11,7 +11,13 @@ VAR_OUTPUT
 END_VAR
 VAR
     (*outputs*)
-    q_xPRESS_OK AT%Q*: BOOL;
+    {attribute 'pytmc' := '
+    pv: PRESS_OK;
+    field: ZNAM PRESS NOT OK;
+    field: ONAM PRESS OK;
+    io: io ;
+    '}
+    q_xPRESS_OK AT%Q*: BOOL; (*Gauge pressure OK, TRUE while the gauge reports a valid pressure*)
 
     {attribute 'pytmc' := '
     pv: FAULT_RESET;
