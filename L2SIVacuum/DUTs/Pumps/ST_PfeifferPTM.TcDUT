@@ -14,62 +14,62 @@ More?
     field: ONAM TRUE;
     io: i;
     '}
-    q_xReset   : BOOL;
+    q_xReset   : BOOL; // TRUE = error acknowledge/reset request asserted to the pump (no units)
     //Readbacks
     {attribute 'pytmc' := '
     pv: PWR_RBV;
     io: i;
     '}
-    i_diPwr		:	DINT;
+    i_diPwr		:	DINT; // Drive power readback (Pfeiffer parameter 316), in W
     {attribute 'pytmc' := '
     pv: TempElec_RBV;
     io: i;
     '}
-    i_diElecTemp	:	DINT;
+    i_diElecTemp	:	DINT; // Electronics temperature readback (Pfeiffer parameter 326), in degC
     {attribute 'pytmc' := '
     pv: TempPump_RBV;
     io: i;
     '}
-    i_diBtmTemp:	DINT;
+    i_diBtmTemp:	DINT; // Pump bottom temperature readback (Pfeiffer parameter 330), in degC
     {attribute 'pytmc' := '
     pv: TempBearing_RBV;
     io: i;
     '}
-    i_diBrngTemp:	DINT;
+    i_diBrngTemp:	DINT; // Bearing temperature readback (Pfeiffer parameter 342), in degC
     {attribute 'pytmc' := '
     pv: TempMotor_RBV;
     io: i;
     '}
-    i_diMtrTemp:	DINT;
+    i_diMtrTemp:	DINT; // Motor temperature readback (Pfeiffer parameter 346), in degC
     {attribute 'pytmc' := '
     pv: ErrorCode_RBV;
     io: i;
     '}
-    i_iErrorCode	:	INT; //might change these to enumeration someday
+    i_iErrorCode	:	INT; // Pfeiffer error code (parameter 303, vendor enumeration; no units), might change these to enumeration someday
     {attribute 'pytmc' := '
     pv: WarningCode_RBV;
     io: i;
     '}
-    i_iWarningCode	:	INT;
+    i_iWarningCode	:	INT; // Pfeiffer warning code (parameter 303, vendor enumeration; no units)
     {attribute 'pytmc' := '
     pv: TempFault_RBV;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io: i;
     '}
-    i_xTempFault	:	BOOL;
+    i_xTempFault	:	BOOL; // TRUE = pump reports an over-temperature fault (no units)
     {attribute 'pytmc' := '
     pv: Power_RBV;
     io: i;
     '}
-    i_uiPowerPctRbk :   UINT;
+    i_uiPowerPctRbk :   UINT; // Power consumption readback (Pfeiffer parameter 708), in percent of full power (%)
 
     {attribute 'pytmc' := '
     pv: SET_SPEED;
     io: io;
     field: EGU "Hz"
     '}
-    i_dSetSpd	:	DINT;
+    i_dSetSpd	:	DINT; // Requested rotation speed setpoint sent as parameter 707 source, in Hz (0..1500 Hz nominal)
 
     {attribute 'pytmc' := '
     pv: SET_SPEED_MODE;
@@ -77,10 +77,10 @@ More?
     field: ZNAM FALSE;
     field: ONAM TRUE;
     '}
-    q_bSetSpd	:	BOOL;
+    q_bSetSpd	:	BOOL; // TRUE = use i_dSetSpd (set speed mode, parameter 026), FALSE = pump default speed
 
 //Controls
-    q_uiPowerPct : UINT := 100; //Should normally be 100
+    q_uiPowerPct : UINT := 100; // Power setpoint (Pfeiffer parameter 708), in percent of full power (%); should normally be 100
 
 END_STRUCT
 END_TYPE
