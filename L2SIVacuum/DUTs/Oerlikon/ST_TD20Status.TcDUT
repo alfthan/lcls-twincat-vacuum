@@ -1,65 +1,154 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_TD20Status" Id="{4114394e-9b7d-4381-aa92-5499001256f3}">
-    <Declaration><![CDATA[TYPE ST_TD20Status :  (* Serial communication defined in Oerlikon Leybold Manual 17200048 *)
+    <Declaration><![CDATA[(*
+    ST_TD20Status - status-message image of one Oerlikon Leybold TD20
+    (TurboDrive) turbo-pump controller.
+
+    PURPOSE
+        Holds one TD20 status message: the status word plus the readback and
+        limit parameters polled from the controller over the serial link. The
+        members hold what the controller reports, not converted engineering
+        values, so each member documents the quantity it carries, its unit and
+        the scale the PLC applies to the raw WORD.
+        The message layout and the parameter numbering are defined in Oerlikon
+        Leybold manual 17200048 (TD20 operating instructions with the serial /
+        PLC interface; parameter list p. 23). Every member name carries the
+        manual parameter number it mirrors (w..._Pnn).
+
+    USAGE
+        Written by the TD20 serial driver, read by the Oerlikon-to-PTM mappers:
+          - FB_TD20SerialDriver / FB_TD20Transaction fill wStatusWord, P3, P4,
+            P5, P11 and P127 from the fixed offsets of the reply frame on every
+            transaction.
+          - FB_TD20SerialDriver additionally polls P20, P21, P24, P32 and P171
+            and writes those members.
+          - FB_OERLIKON_TO_PTM and FB_PTM_TurboDrive.M_Serial_IO map the members
+            into ST_LeyboldPTM / ST_PTM; both turn P4 and P5 into motor power.
+        On a transaction error FB_TD20SerialDriver.a_ClearStatus() zeroes every
+        member, so an all-zero struct means "no valid status message", not
+        "pump at 0 Hz / 0 V / 0 A". Members that carry a pytmc pragma are
+        exported to EPICS as integer readbacks ('io: i').
+
+    OBJECTIVES
+        - State the unit and the scale of every member that carries a physical
+          quantity, so no consumer has to guess whether a raw WORD is Hz, V, A
+          or degC before scaling it or comparing it against a limit.
+        - Name the manual parameter each member mirrors, so its encoding can be
+          checked against manual 17200048 instead of inferred from the driver.
+        - Record that the PLC itself applies no conversion to these members, so
+          the raw reply and any engineering value are not confused.
+
+    HISTORY
+        2026-11-28 / Scirix Agent
+            Added this header and a quantity / unit / scale comment on every
+            member. Comment only: no declaration, member name, member order or
+            pytmc pragma change (audit finding #560, convention
+            conv_321640e095c0).
+        2025-08-22 / Yann Stephen Mandza (ysmandza@slac.stanford.edu)
+            Struct kept unchanged when the product-version attributes were
+            removed from the project files (commit 448f6e4).
+        2025-03-09 / Yann Stephen Mandza (ysmandza@slac.stanford.edu)
+            Struct moved into the L2SIVacuum library together with the serial
+            drivers (commit 2c3ce2b); written originally for the L2SI vacuum
+            system.
+*)
+TYPE ST_TD20Status :  (* Serial communication defined in Oerlikon Leybold Manual 17200048 *)
 STRUCT
-    /// Received Status Word
+    /// Raw status word of the controller, taken from bytes 11-12 of the reply
+    /// frame by FB_TD20Transaction. A bit field, no unit; the bits the mappers
+    /// use are 4 = accelerating, 5 = decelerating, 7 = temperature warning /
+    /// overtemperature, 10 = at speed, 14 = warning summary and 15 = remote
+    /// control enabled.
     wStatusWord: WORD;
-    /// Current stator frequency
+    /// Current stator frequency (parameter 3) - unit: Hz. FB_TD20Transaction
+    /// copies the reply 1:1 and the mappers assign it directly to
+    /// ST_LeyboldPTM.i_diCurSpd / ST_PTM.i_diCurSpd (a DINT speed), so the
+    /// value is consumed as Hz without any PLC scaling; the controller's own
+    /// resolution for parameter 3 (manual 17200048 p. 23) is the resolution of
+    /// one LSB, so confirm it before using this value as a speed limit.
     {attribute 'pytmc' := '
     pv: Frequency;
     io: i;
     '}
     wFrequency_P3: WORD;
-    /// Current intermediate circuit voltage
+    /// Current intermediate-circuit (DC link) voltage (parameter 4) - unit: V,
+    /// in steps of 0.1 V: the controller reports 0.1 V units ("voltage in units
+    /// 0.1V, TD20 manual page 23") and a raw value of 540 is 54.0 V. The
+    /// voltage is not published on its own; FB_OERLIKON_TO_PTM and
+    /// FB_PTM_TurboDrive.M_Serial_IO use it only in the motor-power product
+    /// (raw P5 * raw P4 * 0.01, in W).
     {attribute 'pytmc' := '
     pv: Voltage;
     io: i;
     '}
     wVoltage_P4: WORD;
-    /// Current motor current
+    /// Current motor current (parameter 5) - unit: A, in steps of 0.1 A: the
+    /// controller reports 0.1 A units ("Current in units 0.1 A, TD20 manual
+    /// page 23") and a raw value of 32 is 3.2 A. FB_PTM_TurboDrive.M_Serial_IO
+    /// multiplies it by 0.1 for the i_rCurrentMon readback and by the raw P4
+    /// voltage for motor power.
     {attribute 'pytmc' := '
     pv: MotorCurrent;
     io: i;
     '}
     wMotorCurrent_P5: WORD;
-    /// Current frequency converter temperature
+    /// Frequency-converter (electronics) temperature (parameter 11) - unit:
+    /// degC (degrees Celsius). Copied 1:1 from the reply with no PLC scaling, so
+    /// the value keeps the controller's own representation for parameter 11.
+    /// The member is an unsigned WORD, so check in manual 17200048 p. 23 how
+    /// sub-zero values are encoded before comparing it against a degC limit.
     {attribute 'pytmc' := '
     pv: Temperature;
     io: i;
     '}
     wConverterTemp_P11: WORD;
-    /// Critical frequency
+    /// Critical stator frequency (parameter 20) - unit: Hz, a speed the
+    /// controller runs through quickly. Read 1:1 with no PLC scaling, like
+    /// wFrequency_P3, so both are directly comparable.
     {attribute 'pytmc' := '
     pv: CriticalFrequency;
     io: i;
     '}
     wCriticalFreq_P20: WORD;
-    /// Max. Current Factor
+    /// Maximum motor-current factor (parameter 21) - dimensionless: a limit on
+    /// the motor current relative to the controller's rating, not an ampere
+    /// value. Read 1:1 from the reply with no PLC scaling.
     {attribute 'pytmc' := '
     pv: MaxCurrentFactor;
     io: i;
     '}
     wMaxCurrentFactor_P21: WORD;
-    /// Setpoint Frequecy
+    /// Setpoint stator frequency (parameter 24) - unit: Hz (see
+    /// ST_TD400Control.wSetSetpointFreq_P24, "speed setting in Hz"). Read 1:1
+    /// with no PLC scaling, so it is directly comparable with wFrequency_P3.
     {attribute 'pytmc' := '
     pv: SetPointFreq;
     io: i;
     '}
     wSetpointFreq_P24: WORD;
-    /// Max. run up time
+    /// Maximum run-up (acceleration) time (parameter 32) - a duration expressed
+    /// in the unit the controller uses for that parameter (manual 17200048
+    /// p. 23). Stored as the raw WORD and never converted to TIME, so a consumer
+    /// must apply the manual's unit before comparing it with a timer.
     {attribute 'pytmc' := '
     pv: MaxRunUpTime;
     io: i;
     '}
     wMaxRunUpTime_P32: WORD;
-    /// Current pump temperature
+    /// Current pump temperature (parameter 127) - unit: degC (degrees Celsius).
+    /// Copied 1:1 from the reply with no PLC scaling; same unsigned-WORD caveat
+    /// as wConverterTemp_P11. The TD20 mappers currently leave it unmapped (the
+    /// assignment to ST_LeyboldPTM.i_diPumpTemp is commented out).
     {attribute 'pytmc' := '
     pv: PumpTemp;
     io: i;
     '}
     wPumpTemp_P127: WORD;
-    /// most recent error code
+    /// Number of the controller's most recent error (parameter 171, index 0) -
+    /// a dimensionless error code; the code table is in manual 17200048.
+    /// Polled by its own transaction, it is not part of the reply frame, and it
+    /// is not scaled by the PLC.
     {attribute 'pytmc' := '
     pv: ErrorCode;
     io: i;
