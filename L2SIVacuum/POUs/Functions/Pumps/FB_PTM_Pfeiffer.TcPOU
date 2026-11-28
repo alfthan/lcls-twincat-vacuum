@@ -183,8 +183,14 @@ VAR_IN_OUT
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[(* This function block is used to map the IO points from the pfeiffer structures
-to the generic turbo structures *)
+        <ST><![CDATA[(* This method is the authoritative Pfeiffer-to-PTM serial mapping: it maps the
+IO points of the pfeiffer structures to the generic turbo structures.
+Control is via DIGITAL IO (q_RunDO / q_PumpingStation, feedback on i_xAtSpd and
+i_xFaultNC); only the status readback, the error acknowledgement and the set
+speed parameters go over RS-485. Fault detection uses the integer error code
+iErrorCode_303. The retired FB_PFEIFFER_TO_PTM (POUs/Serial drivers/Pumps/
+Pfeiffer) is kept only as a deprecated reference of this contract - make
+mapping changes here. *)
 (*
 if (bInit) Then
     bInit := False;

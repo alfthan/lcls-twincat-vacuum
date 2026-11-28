@@ -1,7 +1,64 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PFEIFFER_TO_PTM" Id="{52e32b74-ae54-4ccd-ade3-e43f2f9c5233}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_PFEIFFER_TO_PTM
+    <Declaration><![CDATA[(*Deprecated*)
+(* This function block is used to map the IO points from the pfeiffer structures
+to the generic turbo structures *)
+
+(* ============================================================================
+   DEPRECATED - REFERENCE ONLY. DO NOT INSTANTIATE IN NEW CODE.
+   ----------------------------------------------------------------------------
+   The Pfeiffer turbo is now a first class PTM device: FB_PTM_Pfeiffer
+   (POUs/Functions/Pumps/FB_PTM_Pfeiffer.TcPOU) owns the pump and performs the
+   serial mapping in FB_PTM_Pfeiffer.M_Serial_IO. That method is the
+   authoritative contract. This POU is kept only as a documented reference of
+   that contract, so the retired serial-only mapping below cannot be mistaken
+   for current behaviour.
+
+   Contract summary, aligned with FB_PTM_Pfeiffer.M_Serial_IO
+   (2026-07-02, commit bc045b5 'Serial IO error bug fix'):
+
+   1) Control is via DIGITAL IO, not serial.
+      FB_PTM_Pfeiffer drives q_RunDO and q_PumpingStation and reads the pump
+      feedback on i_xAtSpd and i_xFaultNC (normally closed fault input). The
+      serial control parameters 10 (pumping station), 23 (motor pump) and 708
+      (power consumption %) are NOT written any more. uiPowerPct_708 therefore
+      stays at the controller default and iq_stPTM.q_uiPowerPct is unused.
+      FB_PfeifferSerialDriver only polls status: its execute sequence runs steps
+      10..91 and then jumps to step 8000 (done), so the parameter write steps
+      (110/120 set speed, 5010/5011/5012/5020/5030) are never entered.
+
+   2) Only the error acknowledgement is still handed over serially.
+      xErrorAck_009 is pulsed by FB_PfeifferSerialDriver until
+      st_Pfeiffer_RBK.xErrorAcknowledged returns; the mapping then clears
+      xErrorAck_009 and iq_stPTM.xResetSW.
+
+   3) Readback: i_xAtSpd is NOT taken from the serial status
+      (xRotationSpeedAttn_306 is already linked via the digital IOs). The drive
+      current lrDriveCurrent_310 is mapped to i_rCurrentMon instead.
+
+   4) Fault detection uses the INTEGER error code (iErrorCode_303 <> 0). The
+      former STRING test on sErrorCode_303 <> '000000' is no longer used.
+
+   5) Set speed: iq_stPTM.q_bSetSpd selects the rotation speed setting mode
+      (xSetSpdMode_026) and iq_stPTM.i_dSetSpd (0..1500 Hz) is converted to the
+      Pfeiffer 707 set value in %, limited to the 20..100 % of the manual
+      (page 18).
+
+   Usage: use FB_PTM_Pfeiffer and call its M_Serial_IO method with the Pfeiffer
+   status (VAR_INPUT) and control (VAR_IN_OUT) structures instead.
+
+   History:
+     2025-03-09  Y. Mandza       : merged with the vacuum serial drivers
+     2025-08-22  Y. Mandza       : project file cleanup
+     2026-07-02  T. Paras        : FB_PTM_Pfeiffer.M_Serial_IO revised - control
+                                   moved to DIO, drive current readback, integer
+                                   error code
+     2026-11-28  Task #439       : mapping updated to match that implementation
+                                   and marked deprecated (audit finding #1059)
+   ============================================================================ *)
+{attribute 'obsolete' := 'FB_PFEIFFER_TO_PTM is deprecated: control is via digital IO. Use FB_PTM_Pfeiffer and its M_Serial_IO method instead.'}
+FUNCTION_BLOCK FB_PFEIFFER_TO_PTM
 VAR_IN_OUT
     {attribute 'pytmc' :=' pv:'}
     iq_stPTM: ST_PfeifferPTM;
@@ -10,18 +67,22 @@ VAR_IN_OUT
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[(* This function block is used to map the IO points from the pfeiffer structures
-to the generic turbo structures *)
+      <ST><![CDATA[(* Deprecated reference implementation - mirrors FB_PTM_Pfeiffer.M_Serial_IO
+   (2026-07-02). See the POU header for the full contract and history. *)
 
 (* Controls *)
-iq_stPfeiffer_ctrl.xPumpingStation_010 := iq_stPTM.q_RunDO;
-iq_stPfeiffer_ctrl.xMotorPump_023 := 1; //Setting always true because parameter 10 alone can enable/disable the pump
-iq_stPfeiffer_ctrl.uiPowerPct_708 := iq_stPTM.q_uiPowerPct;
-iq_stPfeiffer_ctrl.xErrorAck_009 := iq_stPTM.xResetSW;
+(* Control is via DIGITAL IO, not serial: FB_PTM_Pfeiffer drives q_RunDO and
+   q_PumpingStation and reads i_xAtSpd / i_xFaultNC. The serial control
+   parameters below are deliberately NOT written any more: *)
+//iq_stPfeiffer_ctrl.xPumpingStation_010 := iq_stPTM.q_RunDO;    // start/stop is q_PumpingStation (DIO)
+//iq_stPfeiffer_ctrl.xMotorPump_023 := 1;                        // pump enable is q_RunDO (DIO)
+//iq_stPfeiffer_ctrl.uiPowerPct_708 := iq_stPTM.q_uiPowerPct;    // no serial power setpoint any more
 
 (* Readbacks *)
 iq_stPTM.i_xAccel := iq_stPfeiffer_stat.xPumpAccelerating_307;
-iq_stPTM.i_xAtSpd := iq_stPfeiffer_stat.xRotationSpeedAttn_306;
+//iq_stPTM.i_xAtSpd := iq_stPfeiffer_stat.xRotationSpeedAttn_306;
+(* At speed is already linked via the digital IO (i_xAtSpd), so it is not read
+   over serial. The serial drive current is reported instead: *)
 iq_stPTM.i_diCurSpd := iq_stPfeiffer_stat.diActiveRotationSpeed_309;
 iq_stPTM.i_diPwr := iq_stPfeiffer_stat.diDrivePower_316;
 iq_stPTM.i_diElecTemp := iq_stPfeiffer_stat.diTempElec_326;
@@ -29,24 +90,36 @@ iq_stPTM.i_diBtmTemp := iq_stPfeiffer_stat.diTempPmpBot_330;
 iq_stPTM.i_diBrngTemp := iq_stPfeiffer_stat.diTempBearng_342;
 iq_stPTM.i_diMtrTemp := iq_stPfeiffer_stat.diTempMotor_346;
 iq_stPTM.i_uiPowerPctRbk := iq_stPfeiffer_stat.uiPowerPct_708;
-
-iq_stPTM.xCommTimeout	:=	iq_stPfeiffer_stat.xTimeout;
+iq_stPTM.i_rCurrentMon := LREAL_TO_REAL(iq_stPfeiffer_stat.lrDriveCurrent_310);
+(* RS-485 timeout of the last transaction, not a pump fault *)
+iq_stPTM.xCommTimeout := iq_stPfeiffer_stat.xTimeout;
 iq_stPTM.i_iErrorCode := iq_stPfeiffer_stat.iErrorCode_303;
 iq_stPTM.i_iWarningCode := iq_stPfeiffer_stat.iWarningCode_303;
 
-(* Check that error acknowledgment is processed*)
+(* Check that error acknowledgment is processed *)
 IF iq_stPfeiffer_stat.xErrorAcknowledged THEN
     iq_stPfeiffer_stat.xErrorAcknowledged := FALSE;
     iq_stPfeiffer_ctrl.xErrorAck_009 := FALSE;
     iq_stPTM.xResetSW := FALSE;
 END_IF
 
+(* Fault detection: INTEGER error code (iErrorCode_303 <> 0), not the string
+   test on sErrorCode_303. An empty string means the pump has not answered yet,
+   so the latched fault state is left untouched. *)
 IF iq_stPfeiffer_stat.sErrorCode_303 = '' THEN
     ;
-ELSIF iq_stPfeiffer_stat.sErrorCode_303 <> '000000' THEN
-iq_stPTM.i_xFault := TRUE;
+ELSIF iq_stPfeiffer_stat.iErrorCode_303 <> 0 THEN
+    iq_stPTM.i_xFault := TRUE;
 ELSE
-iq_stPTM.i_xFault := FALSE;
+    iq_stPTM.i_xFault := FALSE;
+END_IF
+
+(* Set speed: setting mode bit plus the 707 set value in % *)
+iq_stPfeiffer_ctrl.xSetSpdMode_026 := iq_stPTM.q_bSetSpd;
+iq_stPTM.i_dSetSpd := LIMIT(0, iq_stPTM.i_dSetSpd, 1500); // 1500 Hz nominal frequency
+IF (iq_stPTM.i_dSetSpd <> 0) THEN
+    iq_stPfeiffer_ctrl.iSetRotationSpeed_707 := DINT_TO_INT(iq_stPTM.i_dSetSpd * 100 / 1500);
+    iq_stPfeiffer_ctrl.iSetRotationSpeed_707 := LIMIT(20, iq_stPfeiffer_ctrl.iSetRotationSpeed_707, 100); // Manual page 18
 END_IF
 ]]></ST>
     </Implementation>
