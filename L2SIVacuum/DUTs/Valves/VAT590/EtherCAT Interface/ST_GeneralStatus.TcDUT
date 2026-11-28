@@ -1,24 +1,47 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_GeneralStatus" Id="{9c22d4f5-1bbc-427a-b513-f8bf1db18bd2}">
-    <Declaration><![CDATA[TYPE ST_GeneralStatus :
+    <Declaration><![CDATA[(*
+ST_GeneralStatus - VAT590 EtherCAT "General Status" readback word.
+
+Purpose:
+    Input word carrying the 16 general status bits of the VAT590 needle valve.
+    It is read by FB_VCN_VAT590 through i_stGenStatus (AT %I*) and decoded into
+    ST_VAT590_STATUS (stValveStatus).
+
+Usage:
+    Bit n of this structure is bit n of the valve's General Status process data.
+    Map it 1:1 onto the EtherCAT input image and never write to it. The two
+    access mode bits are combined into E_VAT590_AccessMode; all Reserved bits are
+    unused by this application and shall be ignored by integrators (they are
+    documented below so that no bit position is left ambiguous).
+
+Objectives:
+    Keep the encoded status and access-mode semantics unambiguous, so the valve
+    state cannot be misinterpreted by integrators or from EPICS.
+
+History:
+    Janez Govednik      2022-03-17  Created VAT590 EtherCAT interface
+    plc-scirix audit    2026-11-28  Added header and per-member bit documentation
+*)
+TYPE ST_GeneralStatus :
 STRUCT
-    Bit0FieldBusDatavalid: BIT;
-    Bit1ZeroExecuted : BIT;
-    Bit2PingPongRxBit : BIT;
-    Bit3PressureSimulation : BIT;
-    Bit4PressureSPReached : BIT;
-    Bit5Reserved : BIT;
-    Bit6Reserved : BIT;
-    Bit7AccessModeBit0 : BIT;
-    Bit8AccessModeBit1 : BIT;
-    Bit9WarningsActive : BIT;
-    Bit10Reserved : BIT;
-    Bit11Reserved : BIT;
-    Bit12Reserved : BIT;
-    Bit13Reserved : BIT;
-    Bit14Reserved : BIT;
-    Bit15Reserved : BIT;
+    Bit0FieldBusDatavalid : BIT;  // Fieldbus data valid: TRUE = valve process data (status/warnings) is valid
+    Bit1ZeroExecuted : BIT;       // Zero procedure executed: TRUE = zero (close/calibrate) command completed by valve
+    Bit2PingPongRxBit : BIT;      // Ping-pong receive bit: echoes Bit2PingPongTxBit of ST_GeneralControlSP (command cycle check)
+    Bit3PressureSimulation : BIT; // Pressure simulation active: TRUE = valve simulates the pressure input, real sensor ignored
+    Bit4PressureSPReached : BIT;  // Pressure setpoint reached: TRUE = measured pressure is within tolerance of the setpoint
+    Bit5Reserved : BIT;           // Reserved (no function): unused VAT bit, always ignore
+    Bit6Reserved : BIT;           // Reserved (no function): unused VAT bit, always ignore
+    Bit7AccessModeBit0 : BIT;     // Access mode readback bit 0 (LSB) - see Bit8AccessModeBit1
+    Bit8AccessModeBit1 : BIT;     // Access mode readback bit 1 (MSB): 00=LOCAL, 01=REMOTE, 10=LOCKED (11 not valid)
+    Bit9WarningsActive : BIT;     // Warnings active: TRUE = at least one bit set in ST_GeneralWarnings/ST_ExtendedWarnings
+    Bit10Reserved : BIT;          // Reserved (no function): unused VAT bit, always ignore
+    Bit11Reserved : BIT;          // Reserved (no function): unused VAT bit, always ignore
+    Bit12Reserved : BIT;          // Reserved (no function): unused VAT bit, always ignore
+    Bit13Reserved : BIT;          // Reserved (no function): unused VAT bit, always ignore
+    Bit14Reserved : BIT;          // Reserved (no function): unused VAT bit, always ignore
+    Bit15Reserved : BIT;          // Reserved (no function): unused VAT bit, always ignore
 END_STRUCT
 END_TYPE
 ]]></Declaration>
