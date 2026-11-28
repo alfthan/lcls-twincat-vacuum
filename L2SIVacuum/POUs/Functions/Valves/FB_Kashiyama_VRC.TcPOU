@@ -5,8 +5,31 @@
         1. pump is NORMAL operating status, and
         2. chamber pressure is below HighSP or pump is at LowSpeed state.
     it will close if chamber pressure is below than lowSP for 180s.
+
+    Usage:
+        - Wire i_xExtILK_OK to the Kashiyama gate valve interlock function, or set it TRUE when the valve is
+          not interlocked.
+        - Wire i_xOverrideMode to the global vacuum override request.
+        - Connect q_stValve to EPICS (OPN_SW, FORCE_OPN, OVRD_ON, OPN_OK, OPN_DO).
+
+    Objectives:
+        - Open the gate valve when the pump is ready, the chamber pressure permits it and the external
+          interlock is satisfied (q_stValve.xOPN_OK).
+        - Honour a manual override only after it has been requested continuously for tOvrdQual, and clear it
+          automatically: when the open permit is restored for tOvrdQual, when the global override mode drops,
+          or when the maximum override duration tOvrdMax has elapsed.
+        - Never let a manual override bypass the external safety interlock (i_xExtILK_OK): the interlock is in
+          series with the override branch of the open command.
+
+    History:
+        - 2026-11-28, TAIO: the manual override term was ORed after q_stValve.xOPN_OK in the open command, so a
+          qualified override plus the global override bit drove the gate valve open while the
+          interlock/pressure permit was FALSE, and pv_xOvrdOpn was only cleared when xOPN_OK returned, so an
+          override could stay active indefinitely (audit finding #695). The override now requires
+          i_xExtILK_OK, self-clears after tOvrdMax (logged through the shared logger), is released when the
+          global override mode drops, and reuses the FB_Valve logger.
 *)
-FUNCTION_BLOCK FB_Kashiyama_VRC
+FUNCTION_BLOCK FB_Kashiyama_VRC EXTENDS FB_Valve
 VAR_IN_OUT
 
 END_VAR
@@ -16,18 +39,25 @@ VAR_OUTPUT
 END_VAR
 VAR_INPUT
     Pump : ST_KashiyamaDryPump;//Kashyiama pump
-    i_xExtILK_OK : BOOL; //Connect to Interlock logic condition(e.g F_TURBO_VRC_ILK Function), otherwise, Set to True if the valve is not interlocked
+    i_xExtILK_OK : BOOL; (*Connect to Interlock logic condition(e.g F_TURBO_VRC_ILK Function), otherwise, Set to True if the valve is not interlocked.
+                            External interlock / safety permit of this gate valve: a manual override can never open the valve while it is FALSE*)
     Gauge : ST_VG;// Pressure Gauge
-    i_xOverrideMode : BOOL;
+    i_xOverrideMode : BOOL; (*To be linked to the global vacuum override bit. The override only replaces the vacuum logic
+                                (pump status and chamber pressure): it never bypasses the external interlock i_xExtILK_OK,
+                                it is honoured only after tOvrdQual and it clears itself after tOvrdMax*)
 END_VAR
 VAR
-    At_HiVac : BOOL;
-    tmrTP : TP;
-    tmrPT: TIME := T#180S;
+    At_HiVac : BOOL;                   (* TRUE when the gauge is valid and the chamber is below the pump low setpoint *)
+    tmrTP : TP;                        (* Low-pressure close delay timer *)
+    tmrPT: TIME := T#180S;             (* Delay before the valve is closed once the chamber is below the pump low setpoint *)
     v1: BOOL;
-    tonOvrd	:	TON;
-    tonDelOK : TON;
-    rtOK	:	R_TRIG;
+    tonOvrd : TON;                     (* Override qualification timer: FORCE_OPN must be present for tOvrdQual *)
+    tonOvrdMax : TON;                  (* Maximum override duration timer *)
+    rtOvrdExpired : R_TRIG;            (* Rising edge of the maximum override duration expiry *)
+    tonDelOK : TON;                    (* Permit-healthy timer used to release a stale override *)
+    rtOK : R_TRIG;                     (* The open permit has been healthy for tOvrdQual *)
+    tOvrdQual : TIME := T#10S;         (* Override qualification/release time *)
+    tOvrdMax : TIME := T#5M;           (* Maximum time a qualified manual override stays active before it clears itself *)
 
     (*IO*)
     i_xOpnLS	AT%I*: BOOL;
@@ -68,15 +98,31 @@ q_stValve.xOPN_OK := Pump.i_xIsRun AND Pump.RdyTmr <= 0.0 AND (Gauge.rPRESS < Pu
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+when the valve permission goes true for more than ten seconds consistently, remove override.
+The override is additionally self-clearing (tOvrdMax) and never a bypass of the external safety
+interlock: it only replaces the vacuum logic (pump status and chamber pressure), while i_xExtILK_OK
+stays in series with the open command.
 *)
 
-tonDelOK(IN:=q_stValve.xOPN_OK, PT:=T#10S);
+tonDelOK(IN:=q_stValve.xOPN_OK, PT:=tOvrdQual);
 rtOK(CLK:=tonDelOK.Q);
 IF rtOK.Q THEN q_stValve.pv_xOvrdOpn :=FALSE; END_IF
 
-//Override timer
-tonOvrd(IN:=q_stValve.pv_xOvrdOpn, PT:=T#10S);
+// Release the Force Open bit when the global override mode is false, so a stale request cannot
+// re-activate the override when the override mode is switched back on
+IF NOT i_xOverrideMode THEN q_stValve.pv_xOvrdOpn :=FALSE; END_IF
+
+//Override qualification timer: FORCE_OPN is honoured only after tOvrdQual of continuous request
+tonOvrd(IN:=q_stValve.pv_xOvrdOpn, PT:=tOvrdQual);
+
+(* Self-clearing override duration: a manual override never stays active indefinitely *)
+tonOvrdMax(IN:=tonOvrd.Q, PT:=tOvrdMax);
+rtOvrdExpired(CLK:=tonOvrdMax.Q);
+IF rtOvrdExpired.Q THEN
+    q_stValve.pv_xOvrdOpn := FALSE;
+    //Log
+    fbLogger(sMsg:='Kashiyama gate valve override cleared: maximum override duration elapsed.', eSevr:=TcEventSeverity.Warning);
+END_IF
 
 
 (* Here's where the valve closes *)
@@ -91,8 +137,13 @@ IF At_HiVac AND q_stValve.q_xOPN_DO AND NOT tmrTP.Q THEN
     q_stValve.pv_xOPN_SW := FALSE ;
 END_IF
 
-(* Here's where the valve opens *)
-q_stValve.q_xOPN_DO := (q_stValve.pv_xOPN_SW AND q_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+(* Here's where the valve opens.
+   The normal open request is gated by the full vacuum permit (xOPN_OK: pump ready, chamber pressure and
+   external interlock). A qualified manual override replaces only the vacuum-logic part of that permit: the
+   external safety interlock (i_xExtILK_OK) is required in the override branch as well, so an override can
+   never energise the gate valve while the interlock is not satisfied, and it is inhibited once its maximum
+   duration (tOvrdMax) has elapsed. *)
+q_stValve.q_xOPN_DO := (q_stValve.pv_xOPN_SW AND q_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode AND i_xExtILK_OK AND NOT tonOvrdMax.Q);
 
 (*Soft IO Mapping*)
 ACT_IO();]]></ST>
