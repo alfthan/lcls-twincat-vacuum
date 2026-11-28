@@ -4,6 +4,9 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+
+    (* Manual override window: an override is honoured for this long after it is requested, and a permission that has been continuously OK for this long clears it again. Declared once so the two override timers cannot drift apart. *)
+    gc_tOverrideTime : TIME := T#10S; // Override qualification and auto-clear duration [s], used by the override TONs (e.g. FB_VCC tonDelOK / tonOvrd)
 END_VAR
 ]]></Declaration>
   </GVL>

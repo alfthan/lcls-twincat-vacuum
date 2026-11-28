@@ -39,16 +39,16 @@ END_IF
 
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
-Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+Solution: Override only after gc_tOverrideTime of override, protect against blips,
+when the valve permission goes true for more than gc_tOverrideTime consistently, remove override
 *)
 
-tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=T#10S);
+tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=gc_tOverrideTime);
 rtOK(CLK:=tonDelOK.Q);
 IF rtOK.Q THEN iq_stValve.xOvrdOpn :=FALSE; END_IF
 
 //Override timer
-tonOvrd(IN:=iq_stValve.xOvrdOpn, PT:=T#10S);
+tonOvrd(IN:=iq_stValve.xOvrdOpn, PT:=gc_tOverrideTime);
 
 (* Here's where the valve opens *)
 iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
