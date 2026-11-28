@@ -1,23 +1,59 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_OERLIKON_TD20_COM" Id="{ae5a89f1-436f-4c56-95f2-ee343a4a170c}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_OERLIKON_TD20_COM
-VAR
-    tTimeOut: TIME := TIME#1S0MS;
-    fbTD20SerialDriver: FB_TD20SerialDriver;
+    <Declaration><![CDATA[(*
+FB_OERLIKON_TD20_COM - polls an Oerlikon TD20 pump controller over serial.
 
+Usage:
+Instantiate one FB per serial port and call it cyclically, wiring the port's
+serial RX and TX buffers. The polled pump status is published on
+astTD20Status.
+
+A reply that does not arrive within tTimeOut, or any other serial driver
+failure, is counted as a failed request and latched on q_xFault together with
+an explicit message on q_sFaultMessage. The fault stays latched until it is
+acknowledged with i_xReset; resetting the driver for the next request never
+dismisses it.
+
+History:
+2026-11-28: Added latched fault output, explicit timeout message and
+failed-request counter (audit finding #736).
+*)
+FUNCTION_BLOCK FB_OERLIKON_TD20_COM
+VAR_INPUT
+    /// Acknowledge and clear the latched communication fault
+    i_xReset: BOOL;
+END_VAR
+VAR_OUTPUT
+    /// Latched communication fault: a serial request failed or timed out
+    q_xFault: BOOL;
+    /// Message describing the latched communication fault
+    q_sFaultMessage: STRING(255);
+    /// Number of failed serial requests since PLC start
+    q_uiFailedRequestCount: UDINT;
+    astTD20Status: ST_TD20Status;
 END_VAR
 VAR_IN_OUT
     SerialRXBuffer : ComBuffer;
     SerialTXBuffer : ComBuffer;
 END_VAR
-VAR_OUTPUT
-    astTD20Status: ST_TD20Status;
+VAR
+    /// Maximum wait time for a device reply
+    tTimeOut: TIME := TIME#1S0MS;
+    fbTD20SerialDriver: FB_TD20SerialDriver;
+    /// Last result message reported by the serial driver
+    sDriverResult: STRING(255);
 END_VAR
-
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This program is called from Serial PTM IO *)
+
+(* Acknowledge the latched communication fault. Only this dedicated reset
+   input clears it: resetting the driver below must not dismiss a fault. *)
+IF i_xReset THEN
+    q_xFault := FALSE;
+    q_sFaultMessage := '';
+END_IF
 
 (* scan the pumps one at a time *)//MG???
 fbTD20SerialDriver(
@@ -29,8 +65,21 @@ fbTD20SerialDriver(
     q_xDone=> ,
     q_xError=> ,
     q_xTimeout=> ,
-    q_sResult=> ,
+    q_sResult=> sDriverResult,
     q_stStatus=> astTD20Status);
+
+(* Count a failed request and raise it as a latched fault with an explicit
+   message instead of discarding the driver's timeout/error result. *)
+IF fbTD20SerialDriver.q_xTimeout THEN
+    q_uiFailedRequestCount := q_uiFailedRequestCount + 1;
+    q_xFault := TRUE;
+    q_sFaultMessage := CONCAT('TD20 serial reply timeout: no reply within ',
+        CONCAT(INT_TO_STRING(TIME_TO_INT(tTimeOut)), ' ms'));
+ELSIF fbTD20SerialDriver.q_xError THEN
+    q_uiFailedRequestCount := q_uiFailedRequestCount + 1;
+    q_xFault := TRUE;
+    q_sFaultMessage := CONCAT('TD20 serial driver error: ', sDriverResult);
+END_IF
 
 IF fbTD20SerialDriver.q_xDone
     OR fbTD20SerialDriver.q_xError
