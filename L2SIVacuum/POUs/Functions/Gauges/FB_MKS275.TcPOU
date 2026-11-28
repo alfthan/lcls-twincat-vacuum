@@ -4,6 +4,11 @@
     <Declaration><![CDATA[(* This function block is used to provide protection and automatic turn on of ion gauges,
  it also manages the turn on of the AT_VAC boolean, and checks to make sure the pressure is good *)
 (* For MKS 275 mini-convectron *)
+(* Hardware-dependent scaling and calibration values (terminal full-scale bits, analog volt span,
+   conversion-curve breakpoints and the calibration coefficients of manual page 27) are declared
+   once as named constants below, so a recalibration or a terminal-bit change is a single-point
+   edit and the conversion code carries no magic numbers.
+   History: 2026-11-28 - centralised the hardware scaling constants (audit finding #619) *)
 {attribute 'no_check'}
 FUNCTION_BLOCK FB_MKS275 EXTENDS FB_GaugeBase
 VAR_IN_OUT
@@ -18,22 +23,54 @@ VAR_OUTPUT
     '}
     PG : ST_VG;
 END_VAR
-VAR
-    V : REAL;
-    iTermBits: UINT := 32767 ; // The terminal's maximum value in bits
-    Vlowest: REAL := 10;
-    (*IO*)
-    i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
-END_VAR
 
 VAR CONSTANT
+    (* Analog input scaling *)
+    iDefaultTermBits : UINT := 32767; // The terminal's maximum value in bits, default 16 bit bipolar terminal (e.g. EL3174)
+    rVoltSpan : REAL := 10.0; // Full analog input span of the terminal in volts
+
+    (* Conversion curve breakpoints in volts (MKS 275 manual page 27) *)
+    rDisconnectedBoundary : REAL := 0.3;
+    rValidLoBoundary : REAL := 0.375; //  0.375V as per manual page 27
+    rBreakpointLoMid : REAL := 2.842; // 2.842V, end of the 5th order calibration polynomial
+    rBreakpointMidHi : REAL := 4.945; // 4.945V, end of the first rational function
+    rValidHiBoundary : REAL := 5.659; // 5.534; // manual page 27
+
+    (* 5th order calibration polynomial for 0.375V <= V < 2.842V (manual page 27) *)
+    rPolyC0 : REAL := -0.02585;
+    rPolyC1 : REAL := 0.03767;
+    rPolyC2 : REAL := 0.04563;
+    rPolyC3 : REAL := 0.1151;
+    rPolyC4 : REAL := -0.04158;
+    rPolyC5 : REAL := 0.008737;
+
+    (* Rational function (N0 + N1*V + N2*V^2) / (1 + D1*V + D2*V^2 + D3*V^3) for 2.842V <= V < 4.945V *)
+    rRat1N0 : REAL := 0.1031;
+    rRat1N1 : REAL := -0.02322;
+    rRat1N2 : REAL := 0.07229;
+    rRat1D1 : REAL := -0.3986;
+    rRat1D2 : REAL := 0.07438;
+    rRat1D3 : REAL := -0.006866;
+
+    (* Rational function (N0 + N1*V) / (1 + D1*V + D2*V^2) for 4.945V <= V < 5.659V *)
+    rRat2N0 : REAL := 100.624;
+    rRat2N1 : REAL := -20.5623;
+    rRat2D1 : REAL := -0.37679;
+    rRat2D2 : REAL := 0.0348656;
+
+    (* Pressure limits and defaults *)
     MinPressure: REAL := 1E-4;
     rDeadband : REAL :=0.05;
-    rValidLoBoundary	:	REAL := 0.375; //  0.375V as per manual page 27
-    rValidHiBoundary	:	REAL := 5.659;// 5.534; // manual page 27
-    rDisconnectedBoundary	:	REAL := 0.3;
     (*Default set point 50 mT*)
     rDefaultVAC_SP: REAL := 5E-2;
+END_VAR
+
+VAR
+    V : REAL;
+    iTermBits: UINT := iDefaultTermBits ; // The terminal's maximum value in bits, overridable with M_SetBits
+    Vlowest: REAL := rVoltSpan;
+    (*IO*)
+    i_iPRESS_R AT%I* :INT; // input Pressure // Link to analog Input
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This function block is used to provide protection and automatic turn on of ion gauges,
@@ -45,9 +82,9 @@ IF PG.rVAC_SP = 0 THEN
     PG.rVAC_SP := rDefaultVAC_SP;
 END_IF
 
-(* Real-value calculation *)
-If (iTermBits=0) THEN iTermBits := 32767;END_IF
-V := 10*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
+(* Real-value calculation: scale the raw counts against the terminal's full scale *)
+If (iTermBits=0) THEN iTermBits := iDefaultTermBits;END_IF
+V := rVoltSpan*INT_TO_REAL(PG.i_iPRESS_R)/iTermBits;
 
 Vlowest := MIN(V, Vlowest);
 
@@ -55,20 +92,20 @@ IF V > rDisconnectedBoundary AND V < rValidLoBoundary  THEN
     PG.rPRESS := MinPressure;
     PG.eState := ValidLo;
 
-ELSIF V >= rValidLoBoundary AND V < rValidLoBoundary +rDeadband  THEN
-    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( -0.02585 + 0.03767*V + 0.04563*EXPT(V,2)+ 0.1151*EXPT(V,3) - 0.04158*EXPT(V,4)+ 0.008737*EXPT(V,5)) );
+ELSIF V >= rValidLoBoundary AND V < rValidLoBoundary + rDeadband  THEN
+    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( rPolyC0 + rPolyC1*V + rPolyC2*EXPT(V,2) + rPolyC3*EXPT(V,3) + rPolyC4*EXPT(V,4) + rPolyC5*EXPT(V,5) ) );
     PG.eState := ValidLo;
 
-ELSIF V >= rValidLoBoundary AND V < 2.842 THEN
-    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( -0.02585 + 0.03767*V + 0.04563*EXPT(V,2)+ 0.1151*EXPT(V,3) - 0.04158*EXPT(V,4)+ 0.008737*EXPT(V,5)) );
+ELSIF V >= rValidLoBoundary AND V < rBreakpointLoMid THEN
+    PG.rPRESS := MAX( MinPressure, LREAL_TO_REAL( rPolyC0 + rPolyC1*V + rPolyC2*EXPT(V,2) + rPolyC3*EXPT(V,3) + rPolyC4*EXPT(V,4) + rPolyC5*EXPT(V,5) ) );
     PG.eState := Valid;
 
-ELSIF V >= 2.842 AND V < 4.945 THEN
-    PG.rPRESS := LREAL_TO_REAL((0.1031-0.02322*V+0.07229*EXPT(V,2))/(1-0.3986*V+0.07438*EXPT(V,2)-0.006866*EXPT(V,3)));
+ELSIF V >= rBreakpointLoMid AND V < rBreakpointMidHi THEN
+    PG.rPRESS := LREAL_TO_REAL((rRat1N0 + rRat1N1*V + rRat1N2*EXPT(V,2))/(1.0 + rRat1D1*V + rRat1D2*EXPT(V,2) + rRat1D3*EXPT(V,3)));
     PG.eState := Valid;
 
-ELSIF V >= 4.945 AND V < rValidHiBoundary THEN
-    PG.rPRESS := LREAL_TO_REAL((100.624-20.5623*V)/(1-0.37679*V+0.0348656*EXPT(V,2)));
+ELSIF V >= rBreakpointMidHi AND V < rValidHiBoundary THEN
+    PG.rPRESS := LREAL_TO_REAL((rRat2N0 + rRat2N1*V)/(1.0 + rRat2D1*V + rRat2D2*EXPT(V,2)));
     PG.eState := ValidHi;
 
 ELSIF V <= rDisconnectedBoundary THEN
