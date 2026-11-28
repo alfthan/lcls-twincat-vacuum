@@ -65,6 +65,14 @@ VAR
     bRXChecksum: BYTE;
     bRXAddress: BYTE;
     nPrefix : BYTE := 16#02;
+    /// Shared diagnostics logger - all transaction failures are reported through it
+    fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.VACUUM);
+    /// Rising edge of the error flag - logs each failed transaction exactly once
+    rtError : R_TRIG;
+    /// Rising edge of the done flag - logs the recovery from a previous failure
+    rtDone : R_TRIG;
+    /// TRUE while the last transaction failed, cleared by the next successful one
+    bErrorLatched : BOOL;
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -219,7 +227,23 @@ CASE iStep OF
         q_wPumpTemp_P127:= 0;
         q_xError := TRUE;
 
-END_CASE]]></ST>
+END_CASE
+
+(* Diagnostics - every timeout, checksum, address, PKE and send/receive error is also
+  reported through the shared logger, so shared diagnostics consumers can observe the
+  state transitions. q_sResult is retained for the caller. Events are emitted on the
+  transition only, never every cycle. *)
+rtError(CLK:= q_xError);
+IF rtError.Q THEN
+    bErrorLatched := TRUE;
+    fbLogger(sMsg:= CONCAT('TD400 transaction failed: ', q_sResult), eSevr:= TcEventSeverity.Warning);
+END_IF
+
+rtDone(CLK:= q_xDone);
+IF rtDone.Q AND bErrorLatched THEN
+    bErrorLatched := FALSE;
+    fbLogger(sMsg:= 'TD400 transaction succeeded after a previous failure.', eSevr:= TcEventSeverity.Info);
+END_IF]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>
