@@ -35,6 +35,13 @@ END_VAR
 VAR CONSTANT
     rMaxPressure : REAL :=1E-4; // Default protection setpoint as per the gamma QPCe manual
     rMinPressure : REAL :=1E-11;
+    (* Gamma QPCe analog pressure input scaling. The QPCe reports pressure on a
+       0..rFullScaleVoltage analog output: the 16-bit ADC count is scaled to volts
+       and the pressure is then decoded logarithmically, one decade per volt
+       (QPCe manual, page 9). *)
+    iFullScaleCount : INT := 32767; // 16-bit ADC full-scale count of the QPCe pressure input
+    rFullScaleVoltage : REAL := 10.0; // Analog input span in volts (iFullScaleCount == 10 V)
+    rLogScaleBase : LREAL := 10.0; // Base of the logarithmic pressure scale (one decade per volt)
 END_VAR
 VAR PERSISTENT
 END_VAR
@@ -88,13 +95,13 @@ IF ePrevState <> stPump.eState THEN
         <ST><![CDATA[(*MG*)
 (* convert the analog input into readable pressure*)
 (* use logarithmic Pressure calculation, Output= Normal and Offset = 0*)
-rV := 10*INT_TO_REAL(i_iPress)/32767;
-//Manual Page 9
+rV := rFullScaleVoltage*INT_TO_REAL(i_iPress)/INT_TO_REAL(iFullScaleCount);
+//Manual Page 9 - hardware scaling is set by the iFullScaleCount, rFullScaleVoltage and rLogScaleBase constants in VAR CONSTANT
 
 if (stPump.bOutputInverted) THEN
-    rPRESS := LREAL_TO_REAL(EXPT(10,(rV-stPump.iOffset)*-1));
+    rPRESS := LREAL_TO_REAL(EXPT(rLogScaleBase,(rV-stPump.iOffset)*-1));
 ELSE
-    rPRESS := LREAL_TO_REAL(EXPT(10,(rV-stPump.iOffset)));
+    rPRESS := LREAL_TO_REAL(EXPT(rLogScaleBase,(rV-stPump.iOffset)));
 END_IF
 
 q_IG.rPRESS := rPRESS;
