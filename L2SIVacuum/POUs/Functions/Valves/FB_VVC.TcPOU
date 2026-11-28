@@ -4,15 +4,35 @@
     <Declaration><![CDATA[(* This Function Block Implements Basic Functionality for Vent Valves VVC.
 
     This function block is also intended for the general use case of solenoid driven (non-variable) valves that lack status readbacks or position indicators.
+
+    Usage:
+        - Wire i_xExtILK_OK to the vent-valve interlock function (F_<Device>_ILK), or set it TRUE when the valve has no external interlock.
+        - Wire i_xOverrideMode to the vacuum override request.
+        - Connect iq_stValve to EPICS (OPN_SW, FORCE_OPN, OVRD_ON, OPN_OK, OPN_DO).
+
+    Objectives:
+        - Command the open solenoid output from the open switch request and the external interlock permit.
+        - Honour a manual override only after the request has been held for i_tOvrdQualDur, and release it
+          once it is no longer needed.
+        - Never let the override defeat the external interlock permit (xOPN_OK) and never let it stay engaged
+          longer than i_tOvrdMaxDur: on expiry the override is cleared and a diagnostic is logged.
+
+    History:
+        - 2026-11-28, TAIO: the override branch is now gated on xOPN_OK so a manual override can never bypass
+          a safety interlock permit; the override qualification/release time is configurable (i_tOvrdQualDur);
+          a maximum-override-duration limiter (i_tOvrdMaxDur) clears xOvrdOpn and logs a diagnostic when it
+          expires, so an override can no longer persist indefinitely; diagnostics go through the shared
+          logger inherited from FB_Valve.
 *)
-(* Note Interlock Logic is External *)
-FUNCTION_BLOCK FB_VVC
+FUNCTION_BLOCK FB_VVC EXTENDS FB_Valve
 VAR_IN_OUT
 
 END_VAR
 VAR_INPUT
     i_xExtILK_OK:BOOL; (*Other External Interlock, Set to True when no external interlock is required*)
     i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only*)
+    i_tOvrdQualDur : TIME := T#10S; (*Override is honoured only after it has been requested this long, and is released once the permit has been healthy this long*)
+    i_tOvrdMaxDur : TIME := T#10M; (*Maximum time a Force Open override may stay engaged before it clears itself and logs a diagnostic*)
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -22,18 +42,19 @@ VAR_OUTPUT
 END_VAR
 VAR
 
-    tonOvrd	:	TON;
-    tonDelOK : TON;
-    rtOK	:	R_TRIG;
+    tonOvrd : TON; (*Override qualification timer*)
+    tonOvrdMax : TON; (*Maximum override duration timer*)
+    rtOvrdExpired : R_TRIG; (*Rising edge of the maximum override duration expiry*)
+    tonDelOK : TON; (*Permit-healthy timer used to release a stale override*)
+    rtOK : R_TRIG; (*Permit has been healthy for i_tOvrdQualDur*)
 
     (*IO*)
-    q_xOPN_DO	AT%Q*: BOOL;
+    q_xOPN_DO AT%Q*: BOOL;
 
     pv_xOvrdOpn: INT;
 END_VAR]]></Declaration>
     <Implementation>
-      <ST><![CDATA[
-iq_stValve.xOPN_OK := i_xExtILK_OK;
+      <ST><![CDATA[iq_stValve.xOPN_OK := i_xExtILK_OK;
 
 IF NOT iq_stValve.xOPN_OK THEN
 iq_stValve.pv_xOPN_SW := FALSE;
@@ -42,20 +63,34 @@ END_IF
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
-*)
+when the valve permission goes true for more than ten seconds consistently, remove override.
+The override is additionally bounded in time (i_tOvrdMaxDur) and can never defeat the
+external interlock permit (xOPN_OK). *)
 
-tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=T#10S);
+tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=i_tOvrdQualDur);
 rtOK(CLK:=tonDelOK.Q);
 IF rtOK.Q THEN iq_stValve.xOvrdOpn :=FALSE; END_IF
 // Release the Force Open bit when the system override is false
 IF NOT (i_xOverrideMode) THEN  iq_stValve.xOvrdOpn :=FALSE; END_IF
 
-//Override timer
-tonOvrd(IN:=iq_stValve.xOvrdOpn, PT:=T#10S);
+//Override qualification timer: the override is only honoured after i_tOvrdQualDur
+tonOvrd(IN:=iq_stValve.xOvrdOpn, PT:=i_tOvrdQualDur);
 
-(* Here's where the valve opens *)
-iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+//Maximum override duration: a Force Open request may never persist longer than i_tOvrdMaxDur.
+//On expiry the override is cleared so the valve returns to its commanded state, and a diagnostic
+//is logged through the shared logger so the removal of the override is observable.
+tonOvrdMax(IN:=iq_stValve.xOvrdOpn AND i_xOverrideMode, PT:=i_tOvrdMaxDur);
+rtOvrdExpired(CLK:=tonOvrdMax.Q);
+IF rtOvrdExpired.Q THEN
+iq_stValve.xOvrdOpn := FALSE;
+fbLogger(sMsg:='Vent valve force open override cleared: maximum override duration expired.', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+(* Here's where the valve opens.
+The override branch is ANDed with xOPN_OK so a manual override can never hold the valve open while
+the external interlock permit is not satisfied, and it is inhibited by tonOvrdMax.Q so the override
+never outlives i_tOvrdMaxDur. *)
+iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode AND iq_stValve.xOPN_OK AND NOT tonOvrdMax.Q);
 
 (*IO Mapping*)
 ACT_IO();]]></ST>
