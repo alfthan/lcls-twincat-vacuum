@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="GVL_EbaraParameters" Id="{c97b2a29-36bd-4e1b-b395-12c520491aba}">
+    <Declaration><![CDATA[(* Ebara ETC turbo pump analog speed-readback calibration.
+   The Ebara ETC controller reports pump speed as an analog voltage: 0..5 V corresponds to
+   100..33600 RPM (pump manual). The readback is wired to a 0..10 V ADC channel, so a
+   full-scale ADC reading represents 10 V, and the readback is unreliable below ~0.2 V
+   (a stopped pump reads ~0.16 V).
+   The values are declared once here with a name so that a different pump model, ADC
+   channel or controller variant is calibrated by adjusting a named value instead of
+   editing the speed calculation. FB_PTM_Ebara uses them as the defaults of its own
+   overridable input parameters. *)
+VAR_GLOBAL CONSTANT
+    gcEbaraADCFullScaleVoltage      : LREAL := 10.0;    //volts represented by a full-scale ADC reading
+    gcEbaraSpeedSpanVoltage         : LREAL := 5.0;     //volts spanned by the speed readback
+    gcEbaraSpeedMaxRPM              : LREAL := 33600.0; //rated speed at the top of the readback span
+    gcEbaraSpeedMinRPM              : LREAL := 100.0;   //rated speed at the bottom of the readback span
+    gcEbaraSpeedZeroDeadbandVoltage : LREAL := 0.2;     //volts; readback below this reports zero speed
+    //RPM at a full-scale ADC reading = (gcEbaraSpeedMaxRPM - gcEbaraSpeedMinRPM) / gcEbaraSpeedSpanVoltage * gcEbaraADCFullScaleVoltage = 67000 RPM
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

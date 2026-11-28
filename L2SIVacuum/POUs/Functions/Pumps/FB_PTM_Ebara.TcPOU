@@ -9,8 +9,16 @@ VAR_IN_OUT
     iq_stPTM : ST_EbaraPTM;
 END_VAR
 VAR_INPUT
-    i_iADCBits : UINT := 15;
+    i_iADCBits : UINT := 15; //Number of bits of the analog channel that carries the speed signal
     i_iRawSpeed: INT; //Should come from PLC Soft IO.
+    (* Speed readback calibration. The defaults are the named constants of GVL_EbaraParameters;
+       they are overridable here so a pump model, ADC channel or controller variant is
+       calibrated per instance without editing the calculation. *)
+    i_rADCFullScaleVoltage : LREAL := gcEbaraADCFullScaleVoltage; //volts represented by a full-scale ADC reading
+    i_rSpeedSpanVoltage : LREAL := gcEbaraSpeedSpanVoltage; //volts spanned by the speed readback
+    i_rSpeedMaxRPM : LREAL := gcEbaraSpeedMaxRPM; //rated speed at the top of the readback span
+    i_rSpeedMinRPM : LREAL := gcEbaraSpeedMinRPM; //rated speed at the bottom of the readback span
+    i_rSpeedZeroDeadbandVoltage : LREAL := gcEbaraSpeedZeroDeadbandVoltage; //volts; readback below this reports zero speed
 END_VAR
 VAR_OUTPUT
 
@@ -20,12 +28,24 @@ VAR
     TOF_STOP: TOF := (PT:=T#0.5S);
     TOF_RESET: TOF :=(PT:=T#0.5S);
 
+    lrADCFullScaleCounts : LREAL; //Raw count of a full-scale ADC reading: 2^ADC bits - 1
+    lrSpeedVoltage : LREAL; //Speed readback converted to volts
+
     (*IO*)
 
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* Ebara ETC control FB
+Purpose : Start/stop, protection and speed readback for an Ebara turbo pump driven by an ETC
+          controller. The block reports the pump speed computed from the analog readback in
+          iq_stPTM.i_diCurSpd.
+Usage   : Command the pump through iq_stPTM (momentary start/stop/reset), feed the analog
+          speed readback on i_iRawSpeed and the ADC width on i_iADCBits. The readback
+          calibration defaults come from GVL_EbaraParameters and may be overridden through
+          the i_r* inputs for a different pump/ADC variant.
 Scott Stubbs & Alex W.
+2026-11-28: Speed readback calibration declared as named constants (GVL_EbaraParameters)
+            instead of embedded literals - audit finding 665, task 420.
 *)
 
 (* Switch processing *)
@@ -73,9 +93,15 @@ IF iq_stPTM.q_RunDO THEN
 END_IF
 
 (* Pump speed calculation *)
-IF iq_stPTM.i_iRawSpeed / (EXPT(2,i_iADCBits)-1) * 10 >= 0.2 THEN //Speed reading appears to zero at ~0.16V
-iq_stPTM.i_diCurSpd := LREAL_TO_DINT(iq_stPTM.i_iRawSpeed/(EXPT(2,i_iADCBits)-1)*67000);
-//V (AI/(2^{# ADC bits} -1 ) * 10[ADC 10V scaling]) * (33600 [Max RPM] - 100) / 5
+(* Raw count -> volts across the ADC span (i_rADCFullScaleVoltage), then volts across the pump
+   readback span (i_rSpeedSpanVoltage) -> RPM across the rated speed span
+   (i_rSpeedMaxRPM - i_rSpeedMinRPM). With the GVL_EbaraParameters defaults this is
+   (33600 - 100) / 5 * 10 = 67000 RPM at a full-scale ADC reading.
+   Below i_rSpeedZeroDeadbandVoltage the readback is noise around zero, so report zero speed. *)
+lrADCFullScaleCounts := EXPT(2, i_iADCBits) - 1;
+lrSpeedVoltage := iq_stPTM.i_iRawSpeed / lrADCFullScaleCounts * i_rADCFullScaleVoltage;
+IF lrSpeedVoltage >= i_rSpeedZeroDeadbandVoltage THEN
+    iq_stPTM.i_diCurSpd := LREAL_TO_DINT(lrSpeedVoltage / i_rSpeedSpanVoltage * (i_rSpeedMaxRPM - i_rSpeedMinRPM));
 ELSE
     iq_stPTM.i_diCurSpd := 0;
 END_IF]]></ST>
