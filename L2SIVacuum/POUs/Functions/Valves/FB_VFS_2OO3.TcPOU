@@ -6,9 +6,24 @@
 (* Create a separate virtual PLC for the fast shutter logic, and tie/map this task to the FAST I/O portion of the ethercat bus,
  so we can scan these I/Os faster than the rest of the vacuum I/Os.
 The Fast shutter was tested with PLC task Cycle Base Time 50us with cycle time 0.050ms.*)
+(* Interlock scope of this function block (see also docs/valves/fast-shutter-vfs.md):
+1. Fast MPS trip - implemented here. The shutter is driven closed when the 2oo3 trigger vote xTrigger is TRUE (at
+   least two of the three CC gauge fast TTL outputs triggered, or at least two gauges are no longer connected) or when
+   i_xExt_OK is FALSE, unless the veto valve is in (xVeto) or the timer-qualified override is active. FB_FastFault
+   (fbFF) is fed with q_xMPS_OK, so an open shutter no longer reported open trips the MPS fast fault output.
+2. External permit - i_xExt_OK. Neighbouring gate valves link their own i_xExt_OK to this shutter's q_xVAC_FAULT_OK.
+3. PMPS is NOT evaluated by this function block. Personnel machine protection arbitration needs the slow task
+   (BeamParameterTransitionManager + FB_Arbiter) and is implemented in the gate valve guarding the same vacuum
+   section: FB_VGC.i_xPMPS_OK -> ACT_PMPS. Wire the PMPS permit there. This shutter does not open, close or
+   fast-fault on PMPS loss alone.
+*)
 FUNCTION_BLOCK FB_VFS_2OO3 EXTENDS FB_Valve
 VAR_INPUT
-    i_xPMPS_OK : BOOL; (*External MPS interlock, Set to TRUE when no PMPS interlock is required*)
+    {attribute 'obsolete' := 'Not evaluated by FB_VFS_2OO3. Wire the PMPS permit to FB_VGC.i_xPMPS_OK (ACT_PMPS).'}
+    i_xPMPS_OK : BOOL; (*NOT EVALUATED by this FB - kept for call compatibility only, has no effect.
+                          PMPS arbitration needs the slow task (BeamParameterTransitionManager + FB_Arbiter) and
+                          is implemented in FB_VGC.i_xPMPS_OK -> ACT_PMPS; wire the PMPS permit there.
+                          This fast shutter implements the fast MPS trip only (fbFF on q_xMPS_OK).*)
     i_xExt_OK : BOOL; (*Other External Interlock, Set to True when no external interlock is required*)
     i_sDevName : T_MaxString := 'VFS'; (*Device name for diagnostic*)
     i_xVeto_Enable : BOOL := FALSE; (*Set to TRUE if there is a Veto Valve to this VFS*)
@@ -122,7 +137,8 @@ In the case where a gauge is not installed, the neigboring gate Valves should no
 is Open.
 *)
 
-(*On first PLC pass, put valve into vented state, which implies a closed valve*)
+(*On first PLC pass, seed the fast-fault device name from the configured device name (i_sDevName).
+No valve state is commanded here: the shutter closes only through the interlock and timer logic below.*)
 IF xFirstPass THEN
     fbFF.i_DevName := i_sDevName;
     xFirstPass := FALSE;
