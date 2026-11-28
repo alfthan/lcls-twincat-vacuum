@@ -39,7 +39,10 @@ VAR
     fbSendString: SendString;
     fbReceiveString: ReceiveString;
     sReceivedString: STRING;
+    /// Maximum wait time for the reply
     tonTimeout: TON;
+    /// Watchdog bounding the wait for the transmission to complete (step 20)
+    tonSendTimeout: TON;
     sRXStringForChecksum: STRING;
     sReceiveStringWOChecksum: STRING;
     sRXCheckSum: STRING;
@@ -87,13 +90,21 @@ CASE iStep OF
             sOut=> sSendString);
         END_IF
         (* send it *)
+        tonSendTimeout(IN:= FALSE); (* reset the send watchdog before a new transmission *)
         fbSendString( SendString:= sSendString, TXbuffer:= iq_stSerialTXBuffer );
         q_sLastSentString := sSendString;
         iStep := iStep + 10;
 
     20: (* Finish sending the String *)
-        IF fbSendString.Busy THEN
+        (* Watchdog: bound the wait for the transmission to complete. A driver that never
+           clears Busy must raise a fault instead of hanging the sequence in this step. *)
+        tonSendTimeout(IN:= TRUE, PT:= i_tTimeOut);
+        IF fbSendString.Busy AND NOT tonSendTimeout.Q THEN
             fbSendString( SendString:= sSendString, TXbuffer:= iq_stSerialTXBuffer );
+        ELSIF fbSendString.Busy AND tonSendTimeout.Q THEN
+            q_sResult := 'In step 20 send timed out waiting for the transmission to complete';
+            q_xTimeout := TRUE;
+            iStep := 9000;
         ELSIF fbSendString.Error <> 0 THEN
             q_sResult := CONCAT('In step 20 fbSendString resulted in error: ', INT_TO_STRING(fbSendString.Error));
             iStep := 9000;
