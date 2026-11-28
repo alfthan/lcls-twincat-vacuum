@@ -6,7 +6,7 @@
 
 FUNCTION F_TurboGateValve_ILK : BOOL (* function return TRUE when ILK is OK*)
 VAR_INPUT
-    i_Turbo : ST_PTM; // Turbo Pump
+    i_stTurbo : ST_PTM; // Turbo Pump
     i_stISG : ST_VG; //Gauge measuring inlet Pressure e.g Pirani
 END_VAR
 VAR
@@ -15,8 +15,8 @@ END_VAR
     <Implementation>
       <ST><![CDATA[(* This Function Block evaluates the ILK condition of the Turbo Gate valve *)
 (* The logic Protects the Turbo pump from inlet pressure above the SP*)
-F_TurboGateValve_ILK := (NOT (i_Turbo.eState = pumpSTOPPED) AND NOT (i_Turbo.eState = pumpSTOPPING) AND NOT (i_Turbo.eState = pumpFAULT))
-                        AND (i_stISG.xPRESS_OK AND i_stISG.rPRESS < i_Turbo.rInletPressureSP);
+F_TurboGateValve_ILK := (NOT (i_stTurbo.eState = pumpSTOPPED) AND NOT (i_stTurbo.eState = pumpSTOPPING) AND NOT (i_stTurbo.eState = pumpFAULT))
+                        AND (i_stISG.xPRESS_OK AND i_stISG.rPRESS < i_stTurbo.rInletPressureSP);
 ]]></ST>
     </Implementation>
   </POU>
