@@ -115,7 +115,9 @@ END_IF
 //xVeto:= i_xVeto AND (i_xVetoValveClosed AND NOT i_xVetoValveOpenDO);
 (* Input Trigger to close the Fast Shutter*)
 (* Neighboring Valves Should also be triggered to Close*)
-IF ((i_xTrigger) OR NOT (i_xPress_OK) OR NOT (i_xExt_OK))  AND NOT(xVeto) AND NOT (tonOvrd.Q AND i_xOverrideMode) THEN
+(* Safety interlocks are never overridable: a trigger, a lost pressure OK or a lost
+   external interlock commands the shutter closed, override active or not.*)
+IF ((i_xTrigger) OR NOT (i_xPress_OK) OR NOT (i_xExt_OK)) AND NOT(xVeto) THEN
     xClose:= TRUE;
     xOpen:= FALSE;
     q_xVAC_FAULT_OK:= FALSE;
@@ -132,7 +134,11 @@ ELSIF (i_xCLS_SW) THEN
     q_xOPN_DO := FALSE;
     //i_xOPN_SW :=FALSE;
     xOpen:=FALSE;
-ELSIF ((rtOPN_SW.Q) AND xOPN_OK AND NOT i_xOpnLS) OR (tonOvrd.Q AND i_xOverrideMode) THEN
+
+(* The manual override replaces the operator open request only; it never bypasses an
+   interlock: opening still requires xOPN_OK, i_xPress_OK and i_xExt_OK.*)
+ELSIF ((rtOPN_SW.Q) OR (tonOvrd.Q AND i_xOverrideMode))
+        AND xOPN_OK AND i_xPress_OK AND i_xExt_OK AND NOT i_xOpnLS THEN
     q_xOPN_DO := TRUE;
 END_IF
 IF (xClose) AND (NOT i_xClsLS) THEN
@@ -174,7 +180,9 @@ q_xMPS_OK := i_xOpnLS AND ((NOT i_xTrigger AND i_xPress_OK) OR xVeto)  AND NOT(i
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+when the valve permission goes true for more than ten seconds consistently, remove override.
+The override only replaces the open request: it is never a way around the shutter
+interlocks, and the close-on-interlock condition stays active while it is set.
 *)
 rTrigOverrideOpen(CLK:= i_xOverrideOpen);
 tonDelOK(IN:=xOPN_OK, PT:=tDelOK);
