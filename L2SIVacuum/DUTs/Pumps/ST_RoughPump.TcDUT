@@ -24,7 +24,7 @@ pv_xRunSW	:	BOOL; //epics/ software control switch
     field: ONAM TRUE;
     io: i
     '}
-q_xRunDo 	:   BOOL;
+q_xRunDo 	:   BOOL; //Run command output to the pump hardware (logical, no units). TRUE = run requested; follows pv_xRunSW only while xIlkOK is TRUE and is forced FALSE otherwise. This is a command, not pump feedback - see xAtSpd for run confirmation.
 
 //Status and Readback
 {attribute 'pytmc' := '
@@ -70,7 +70,7 @@ iErr	:	BOOL; //Error state/code
     io: i;
     '}
 
-    eState	:	E_PumpState;
+    eState	:	E_PumpState; //Pump state machine state, unitless enum E_PumpState: 0=E_PumpState.pumpSTOPPED, 1=pumpSTARTING, 2=pumpRUNNING, 3=pumpFAULT, 4=pumpSTOPPING. Derived in the pump FB from the interlock permit, the run command above and the pump run feedback.
 
 END_STRUCT
 END_TYPE
