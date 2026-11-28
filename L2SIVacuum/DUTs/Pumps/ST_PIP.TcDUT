@@ -2,6 +2,9 @@
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_PIP" Id="{3e94e806-a651-479f-afb3-d6455fe7a8d1}">
     <Declaration><![CDATA[TYPE ST_PIP :
+(* ST_PIP - public, EPICS-facing interface of an ion pump (PIP) driven by a SAES SIP or a Gamma QPCe controller.
+   One member per PV. Every member states its meaning, its polarity and its units, so that integrators can wire
+   interlocks, override logic and setpoints without guessing interlock polarity, timer units or pressure scaling. *)
 STRUCT
 (* Read back *)
 // 	i_xHVisON : BOOL;
@@ -13,7 +16,7 @@ STRUCT
     field: ONAM OK ;
     io: i;
     '}
-       xILKOk : BOOL;
+       xILKOk : BOOL;	// Interlock permit: TRUE = interlock satisfied, HV allowed; FALSE = interlock NOT OK, HV inhibited
 
     {attribute 'pytmc' := '
     pv: ERROR;
@@ -21,7 +24,7 @@ STRUCT
     field: ONAM TRUE ;
     io: i;
     '}
-       xError : BOOL;
+       xError : BOOL;	// TRUE while the pump controller reports a fault; fed from the controller error input (boolean, no units)
 
     {attribute 'pytmc' := '
     pv: AT_VAC_SP;
@@ -32,15 +35,14 @@ STRUCT
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rHVEna_SP : REAL := 1.0E-4;
+    rHVEna_SP : REAL := 1.0E-4;	// HV-enable protection setpoint: HV is permitted only while the interlock gauge reads at or below this pressure [Torr]
 
     {attribute 'pytmc' := '
     pv: ILK_DEVICE;
     io: i;
     '}
-    sIlkDeviceName: STRING;
-    //Required for other devices using this gauge as interlock
-    sPath: STRING;
+    sIlkDeviceName: STRING;	// PV path of the gauge that supplies the interlock permit, copied from i_stGauge.sPath (string, no units)
+    sPath: STRING;	// Instance PV path of this pump, required for other devices that use this pump as an interlock (string, no units)
 
 (* EPICS Controls *)
     {attribute 'pytmc' := '
@@ -49,20 +51,20 @@ STRUCT
     field: ZNAM OFF;
     field: ONAM ON;
     '}
-    xHVEna_SW : BOOL;
+    xHVEna_SW : BOOL;	// HV ON/OFF command from the operator: TRUE = HV on requested (still gated by the interlock permit)
     {attribute 'pytmc' := '
     pv: Auto_On;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     io:io;
     '}
-    xAutoOn : BOOL:=TRUE;
+    xAutoOn : BOOL:=TRUE;	// TRUE = start HV automatically as soon as the pressure interlock permits (auto-run, no units)
 
     {attribute 'pytmc' := '
     pv: AutoOn_timer;
     io:i;
     '}
-    iAutoOnTimer : INT;
+    iAutoOnTimer : INT;	// Auto-on / auto-recover qualification delay reported to EPICS (TwinCAT TIME converted to INT) [ms]
 
     {attribute 'pytmc' := '
     pv: OVRD_ON ;
@@ -70,7 +72,7 @@ STRUCT
     field: ONAM Override ON;
     io: io;
     '}
-    xOverrideMode	:	BOOL; (* Shows the override status of this valve *)
+    xOverrideMode	:	BOOL;	// TRUE while the global interlock override is active for this pump; it only enables the override, it never bypasses the pump protection
 
     {attribute 'pytmc' := '
     pv: FORCE_START;
@@ -78,7 +80,7 @@ STRUCT
     field: ZNAM FALSE;
     field: ONAM FORCE START;
     '}
-    pv_xOvrdStart	:	BOOL;
+    pv_xOvrdStart	:	BOOL;	// Force-start request: TRUE arms a time-qualified interlock override; self-clears when the override expires or the global override drops
 
 
     {attribute 'pytmc' := '
@@ -91,19 +93,19 @@ STRUCT
     autosave_pass1: VAL DESC
     '}
     /// Protection setpoint hysteresis
-    rHYS_PR: REAL := 0.001;
+    rHYS_PR: REAL := 0.001;	// Dead band around rHVEna_SP: HV re-enables only below (rHVEna_SP - rHYS_PR) [Torr]
     {attribute 'pytmc' := '
     pv: AI_Offset;
     io: io;
     '}
-    iOffset: INT:=13;
+    iOffset: INT:=13;	// Decade offset of the controller pressure conversion: pressure [Torr] = 10^(rV - iOffset), rV = 10 * raw counts / 32767 (exponent, no unit)
     {attribute 'pytmc' := '
     pv: Inverted;
     field: ZNAM NORMAL;
     field: ONAM INVERTED;
     io: io;
     '}
-    bOutputInverted : BOOL;
+    bOutputInverted : BOOL;	// TRUE = invert the pressure-log slope before conversion, i.e. the controller output polarity is inverted (boolean, no units)
 (* IO Controls *)
     {attribute 'pytmc' := '
     pv: HV_DO;
@@ -120,12 +122,12 @@ STRUCT
     field: EGU "TORR"
     io: i;
     '}
-    rPRESS: REAL;  //
+    rPRESS: REAL;	// Pump pressure readback after log conversion of the controller input, clamped to min. 1E-11 [Torr]
     {attribute 'pytmc' := '
     pv: PRESS_AI;
     io: i;
     '}
-    i_iPRESS: REAL;  //
+    i_iPRESS: REAL;	// Raw analogue pressure input from the pump controller, 0..32767 counts over the 0..10 V span (raw ADC counts, no conversion applied)
     {attribute 'pytmc' := '
     pv: HV_DI;
     field: ZNAM FALSE;
@@ -144,7 +146,7 @@ STRUCT
     io: i;
     '}
 
-    eState	:	E_PumpState;
+    eState	:	E_PumpState;	// Pump run state derived from the HV command and the HV status input (STOPPED/STARTING/RUNNING/FAULT/STOPPING, enum, no units)
 
     {attribute 'pytmc' := '
     pv: LOGGER;
@@ -152,7 +154,7 @@ STRUCT
     field: ZNAM OFF ;
     field: ONAM ON ;
     '}
-    xLog : BOOL:=TRUE;
+    xLog : BOOL:=TRUE;	// TRUE = report this pump's state changes and interlock losses through the shared event logger (boolean, no units)
 END_STRUCT
 END_TYPE]]></Declaration>
   </DUT>
