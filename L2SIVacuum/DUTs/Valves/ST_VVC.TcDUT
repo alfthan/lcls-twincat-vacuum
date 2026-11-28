@@ -4,6 +4,12 @@
     <Declaration><![CDATA[TYPE ST_VVC :
 STRUCT
 
+(* Vent valve (VVC) interface struct: solenoid driven on/off vent valves without
+   position feedback. Serves as the VAR_IN_OUT interface of FB_VVC and as the
+   valve state record read by callers such as F_TurboExtILKLogic.
+   All members are BOOL, so no engineering units apply; the TRUE state is stated
+   for each member. *)
+
 (* Inputs *)
 
     {attribute 'pytmc' := '
@@ -12,28 +18,28 @@ STRUCT
     field: ONAM OPEN;
     io: io;
     '}
-    pv_xOPN_SW	: BOOL;
+    pv_xOPN_SW	: BOOL;	(* Open switch request (PV OPN_SW, EPICS read/write): TRUE = request the valve open, FALSE = request it closed; forced FALSE while the open interlock xOPN_OK is not TRUE. Boolean, no units. *)
     {attribute 'pytmc' := '
     pv:FORCE_OPN;
     field: ZNAM FALSE;
     field: ONAM FORCE OPEN;
     io: io;
     '}
-    xOvrdOpn	:	BOOL;
+    xOvrdOpn	:	BOOL;	(* Force open request (PV FORCE_OPN, EPICS read/write): TRUE requests the valve open regardless of the open switch; honoured only while xOverrideMode is TRUE and after a 10 s qualification delay, and it clears itself once the open interlock has been OK for 10 s. Boolean, no units. *)
     {attribute 'pytmc' := '
     pv: OVRD_ON;
     field: ZNAM Override OFF ;
     field: ONAM Override ON;
     io: io;
     '}
-    xOverrideMode	:	BOOL; (* Shows the override status of this valve *)
+    xOverrideMode	:	BOOL;	(* Shows the override status of this valve (PV OVRD_ON): TRUE = the global override bit is active, which allows a qualified force open request (xOvrdOpn) to open the valve. Boolean, no units. *)
     {attribute 'pytmc' := '
     pv: OPN_OK;
     field: ZNAM OPN ILK NOT OK ;
     field: ONAM OPN ILK OK ;
     io: i;
     '}
-    xOPN_OK	: BOOL;
+    xOPN_OK	: BOOL;	(* Open interlock OK (PV OPN_OK): TRUE = the open interlock condition is satisfied and opening is permitted; FALSE inhibits the open output and clears pv_xOPN_SW. Boolean, no units. *)
 
 (* Outputs *)
     {attribute 'pytmc' := '
@@ -42,7 +48,7 @@ STRUCT
     field: ONAM OPEN;
     io: i;
     '}
-    q_xOPN_DO	: BOOL;
+    q_xOPN_DO	: BOOL;	(* Open digital output to the valve solenoid (PV OPN_DO): TRUE = solenoid energized, valve commanded open; FALSE = de-energized, valve closed. Boolean, no units. *)
 
 END_STRUCT
 END_TYPE]]></Declaration>
