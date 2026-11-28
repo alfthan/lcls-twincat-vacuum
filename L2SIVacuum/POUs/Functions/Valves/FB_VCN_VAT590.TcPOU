@@ -8,8 +8,21 @@ VAR_INPUT
     IG : ST_VG;              // Input from a cold cathode gauge used in control loop
 END_VAR
 VAR_OUTPUT
+    (* Needle valve control/status interface published to EPICS.
+       The pv name is deliberately left empty: pytmc takes the record prefix
+       from the pragma on the FB_VCN_VAT590 instance in the machine GVL and
+       the record name from the pv of each ST_VCN_VAT590 member (POS_RAW,
+       PRES_RAW, PRES_TORR, POS_SP, PRES_SP, ILK_OK, POS_LIMIT,
+       PRES_SET_LIMIT, PRES_RDBK_LIMIT, POS_REQ, PRES_REQ, STATE, REM_CTRL,
+       ZERO, COE_PARAM:*, COE_ERROR, COE_RESET, ETHCAT_COMM_STATUS). Every
+       one of those members declares its own io direction, so the io
+       declared here is 'io' (read/write): this interface carries EPICS
+       commands as well as readbacks and the container io only applies to a
+       member that declares no io of its own. Naming this container would
+       insert an extra path segment and rename every published valve PV. *)
     {attribute 'pytmc' := '
     pv:
+    io: io;
     '}
     stVcnVat590	: ST_VCN_VAT590;       // Needle valve VAT590 structure
 END_VAR
