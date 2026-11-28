@@ -2,6 +2,59 @@
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_VG" Id="{e8999049-eca7-4ca1-9a7c-26918f6aba1e}">
     <Declaration><![CDATA[TYPE ST_VG :
+(*
+    Purpose: the common interface structure of a vacuum gauge in L2SIVacuum. One
+    ST_VG instance carries everything a single gauge needs and reports: the
+    pressure reading and its validity, the ion-gauge high-voltage controls and
+    feedback, the at-vacuum / protection / hysteresis setpoints, the gauge type
+    and the persistence bookkeeping. Every vendor-specific gauge function block
+    (FB_MKS275, FB_MKS355, FB_MKS422, FB_MKS500, FB_MKS909, FB_MKS_937A/B,
+    FB_MKS317, FB_IE514, FB_IMG401, FB_MX7M, FB_ITR90, FB_CVM201, FB_CCM501,
+    FB_CMR362, FB_972, FB_9XX, ...) reads and writes the same members, so
+    valves, pumps and interlock logic never have to know which gauge model is
+    fitted. Some members exist for cold-cathode/ion gauges only and are left
+    unused by a pirani - they are not disabled, so read this as a flattened
+    parent/child hierarchy rather than a strict per-model type.
+
+    Usage: declare one instance per physical gauge next to its function block
+    and pass it by reference - a gauge's own data is the VAR_OUTPUT (VG/IG) of
+    its FB, while the VAR_INPUT (PG) is a peer gauge, in practice the pirani
+    that protects an ion gauge's high voltage:
+        {attribute 'pytmc' := 'pv: XXXX:VAC:GPI:01'}
+        stGauge : ST_VG := (eTYPE := PG907);
+        fbGauge : FB_MKS275;
+        fbGauge(PG := stPG, VG := stGauge);
+    Where an interlock has to be satisfiable without a gauge, a dummy instance
+    is used with xPRESS_OK forced TRUE (see RCC_GCP_01_dummy in PRG_RCC of the
+    sample-delivery projects). FB_MKS909 and FB_IE514 take two instances: the
+    ion gauge (IG) plus the pirani (PG) that guards it.
+
+    EPICS surface: a member carrying a pytmc pragma is published under the
+    instance's PV prefix, where "io: i" is a readback (PLC -> EPICS), "io: o" is
+    a setpoint (EPICS -> PLC) and "io: io" is both. A member without a pragma is
+    PLC-internal only: wHV_RO, xBAKEOUT, eTYPE, iTYPE, wPG, xTurnOnTime, iVacSp,
+    sPath, rFULL_SCALE. xAT_VAC, xPRESS_OK and eState are the engineered status a
+    consumer should interlock on; i_iPRESS_R and wHV_RO are raw fields.
+
+    Objectives:
+    1. one gauge interface, so every consumer works with any gauge model;
+    2. keep engineered status distinct from raw fields;
+    3. carry the per-gauge setpoints that must be published and persisted;
+    4. expose exactly the PV surface a gauge needs, through pytmc pragmas.
+
+    History:
+        2018-10-12  M. Ghaly - ST_VG introduced with the first library release.
+        2019-2021   Library maintainers (mainly M. Ghaly) - cold-cathode and ion
+                    gauge HV controls and feedback, at-vacuum / protection /
+                    hysteresis setpoints, gauge type selection, EPICS autosave
+                    and the logger switch.
+        2025-06-09  T. Paras - formatting only (pre-commit).
+        2025-08-22  ysmandza - ProjectVersion removal, no declaration change.
+        2026-11-28  Scirix Agent - header and per-member comments added; no
+                    member, type, default or pragma changed (audit finding
+                    #551, task #488).
+*)
+
 STRUCT
     /// A general gauge structure is used to make the rest of the interlocking simpler. There are some parameters for cold cathodes that are not used by pirani.
     ///These features aren't disabled, they just aren't used, think child/parent classes.
@@ -14,21 +67,21 @@ STRUCT
     field: EGU "TORR"
     io: i;
     '}
-    rPRESS: REAL;  //This is the human-readable pressure
+    rPRESS: REAL;  // Gauge pressure in TORR, converted from the raw input; PV <prefix>:PRESS
     {attribute 'pytmc' := '
     pv: AT_VAC;
     io: i;
     field: ZNAM FALSE;
     field: ONAM TRUE;
     '}
-    xAT_VAC: BOOL;
+    xAT_VAC: BOOL; // TRUE = pressure is below rVAC_SP, i.e. at vacuum; the bit valves and pumps interlock on; PV <prefix>:AT_VAC
     {attribute 'pytmc' := '
     pv: PRESS_OK;
     field: ZNAM OFF;
     field: ONAM ON;
     io: i;
     '}
-    xPRESS_OK: BOOL;
+    xPRESS_OK: BOOL; // TRUE = the reading is inside the gauge's valid range/state and rPRESS can be trusted; NOT an at-vacuum indication; PV <prefix>:PRESS_OK
     {attribute 'pytmc' := '
     pv: STATE;
     field: ZRST Off;
@@ -41,7 +94,7 @@ STRUCT
     field: SVST ValidLo;
     io: i;
     '}
-    eState	:	E_PressureState;
+    eState	:	E_PressureState; // Pressure/validity state of this gauge (Off, GaugeDisconnected, OoR, PressInvalid, Starting, Valid, ValidHi, ValidLo); PV <prefix>:STATE
     (* EPICS Controls *)
     {attribute 'pytmc' := '
     pv: HV_SW;
@@ -56,18 +109,18 @@ STRUCT
     field: ONAM TRUE;
     io:io;
     '}
-    xAutoOn : BOOL := TRUE;
+    xAutoOn : BOOL := TRUE; // TRUE = switch this gauge back on automatically once the pressure permits (auto-recover); read-write from EPICS as <prefix>:Auto_On
     {attribute 'pytmc' := '
     pv: AutoOn_timer;
     io:i;
     '}
-    iAutoOnTimer : INT;
+    iAutoOnTimer : INT; // Auto-recover delay in seconds, written by the gauge FB from its recover TON preset (TIME_TO_INT(tRecover.PT)); PV <prefix>:AutoOn_timer
     /// Controls and I/Os
     {attribute 'pytmc' := '
     pv: PRESS_AI;
     io: i;
     '}
-    i_iPRESS_R  :INT; // input Pressure // Link to analog Input
+    i_iPRESS_R  :INT; // Raw analog input counts (0..32767) linked to the pressure analog input terminal - NOT a pressure, the gauge FB converts it; PV <prefix>:PRESS_AI
     {attribute 'pytmc' := '
     pv: HV_ON;
     io: i;
@@ -86,11 +139,11 @@ STRUCT
     field: ZNAM FALSE ;
     field: ONAM TRUE ;
     '}
-    q_xHV_DIS : BOOL; // Enable High Voltage when True
+    q_xHV_DIS : BOOL; // Enable High Voltage when True (FB_MKS909 / FB_IMG401 sense); FB_MKS_937B writes the opposite sense - TRUE there means disable, so check the driver before consuming
     //
-    wHV_RO: WORD;
+    wHV_RO: WORD; // High-voltage read-back word (HV read-only status); raw field with no pytmc pragma and no writer or reader anywhere in L2SIVacuum today - reserved, do not consume
 
-    /// Bakeout bit
+    /// Bakeout bit: forces xPRESS_OK/xAT_VAC while an ion gauge is baked out
     xBAKEOUT: BOOL;
 
     //enum for gauge type - will replace iType
@@ -113,8 +166,8 @@ STRUCT
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    rVAC_SP: REAL := 0.001; /// At vacuum setpoint for all gauges
-    /// Protection setpoint for ion gauges at which the gauge turns off, not used for pirani
+    rVAC_SP: REAL := 0.001; /// At vacuum setpoint for all gauges, in TORR (compared against rPRESS)
+    /// Protection setpoint for ion gauges, in TORR, at which the gauge turns off; not used for pirani
     {attribute 'pytmc' := '
     pv: PRO_SP;
     io: io;
@@ -134,7 +187,7 @@ STRUCT
     field: EGU "TORR"
     autosave_pass1: VAL DESC
     '}
-    /// Protection setpoint hysteresis
+    /// Protection setpoint hysteresis, in TORR
     rHYS_PR: REAL := 0.001;
     {attribute 'pytmc' := '
     pv: ILK_OK;
@@ -149,11 +202,11 @@ STRUCT
     field: ZNAM OFF ;
     field: ONAM ON ;
     '}
-    xLog : BOOL:=TRUE;
+    xLog : BOOL:=TRUE; // TRUE = this gauge logs its events to the shared vacuum logger, FALSE = silent (used for noisy gauges); PV <prefix>:LOGGER
     //Required for other devices using this gauge as interlock
     sPath: STRING;
 
-    /// Full scale pressure in Torr for baratron pressure conversion
+    /// Full scale pressure in TORR for baratron pressure conversion
     rFULL_SCALE: REAL := 1000;
 
 END_STRUCT
