@@ -8,6 +8,9 @@ STRUCT
 
 NOTE: This is an archetype, use an extension of this structure for a specific pump (or make one).
 
+Modified 2026-11-28: iWrn/iErr are declared INT (pump warning/error codes) so that their
+i_ (integer) prefix matches the declared type; the boolean summaries stay in xWrn/xErr.
+
 *)
 
 //Controls
@@ -49,7 +52,7 @@ xAtSpd	:	BOOL; //Pump at speed setpoint
     io: i
     '}
 xWrn	:	BOOL; //Pump warning
-iWrn	:	BOOL; //Warning state/code
+iWrn	:	INT; //Warning code from the pump controller, 0 = no warning
 {attribute 'pytmc' := '
     pv: ERROR;
     field: ZNAM FALSE;
@@ -57,7 +60,7 @@ iWrn	:	BOOL; //Warning state/code
     io: i
     '}
 xErr	:	BOOL; //Error summary
-iErr	:	BOOL; //Error state/code
+iErr	:	INT; //Error code from the pump controller, 0 = no error
 
 (*State*)
     {attribute 'pytmc' := '
