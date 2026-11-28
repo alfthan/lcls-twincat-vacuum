@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_V_TO_INT" Id="{13161351-f8bf-4d9a-8d5b-3b10710d601a}" SpecialFunc="None">
+    <Declaration><![CDATA[{attribute 'no_check'}
+(*
+    Function: F_V_TO_INT
+    Purpose:  Convert an analog input voltage (0..10 V) into the raw INT
+              terminal reading (0..32767) used by the gauge unit tests.
+    Usage:    This^.i_iPRESS_R := F_V_TO_INT(rAnalog := 3.674);
+    History:  2026-11-28 - renamed from V_TO_INT (F_ kind prefix added) and
+              input 'analog' renamed to 'rAnalog' so identifiers carry their
+              kind/type prefixes.
+*)
+FUNCTION F_V_TO_INT : INT
+VAR_INPUT
+    rAnalog : REAL; // analog input voltage in volts, full scale = iFullRange
+END_VAR
+VAR
+    iBits :INT := 32767; // raw terminal counts at full-scale voltage
+    iFullRange:INT := 10; // full-scale input voltage in volts
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Guard against a zero full-scale range to avoid a division by zero
+if ( iFullRange = 0 ) THEN iFullRange := 10;END_IF
+// Scale the input voltage onto the raw terminal counts
+F_V_TO_INT := REAL_TO_INT(rAnalog * iBits / iFullRange);]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

@@ -32,7 +32,7 @@ END_VAR
 TEST('MKS275_Check_Range');
 Case cycle of
     4:
-    This^.i_iPRESS_R := V_TO_INT(3.674);
+    This^.i_iPRESS_R := F_V_TO_INT(3.674);
     Expected :=5 ;
     eStateExpected := Valid;
 
@@ -46,7 +46,7 @@ Case cycle of
     TEST_FINISHED_NAMED('MKS275_Range_R2');
 
     8:
-    This^.i_iPRESS_R := V_TO_INT(5.614);
+    This^.i_iPRESS_R := F_V_TO_INT(5.614);
     Expected :=900 ;
     eStateExpected := Valid;
 
@@ -62,7 +62,7 @@ Case cycle of
 
 
     13:
-    This^.i_iPRESS_R := V_TO_INT(0.3);
+    This^.i_iPRESS_R := F_V_TO_INT(0.3);
     Expected :=-1 ;
     eStateExpected := GaugeDisconnected;
 
@@ -77,7 +77,7 @@ Case cycle of
 
 
     18:
-    This^.i_iPRESS_R := V_TO_INT(5.66);
+    This^.i_iPRESS_R := F_V_TO_INT(5.66);
     Expected :=-1 ;
     eStateExpected := OoR;
 
@@ -113,7 +113,7 @@ END_VAR
         <ST><![CDATA[// Start the Test
 TEST('MKS275_Startup');
 //Assign Voltage to FB
-This^.i_iPRESS_R := V_TO_INT(0.384);
+This^.i_iPRESS_R := F_V_TO_INT(0.384);
 // Assigne expected result corresponing to the test input
 Expected :=0.001 ;
 eStateExpected := Valid;

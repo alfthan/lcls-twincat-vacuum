@@ -34,7 +34,7 @@ END_VAR
         <ST><![CDATA[TEST('Check_Range');
 Case This^.cycle of
     12:
-    This^.i_iPRESS_R :=  V_TO_INT(0.61);
+    This^.i_iPRESS_R :=  F_V_TO_INT(0.61);
     This^.PG.rPRESS := 1E-4;
     This^.PG.xPRESS_OK := True;
     fb_MKS422.M_HVE(TRUE);
@@ -51,7 +51,7 @@ Case This^.cycle of
     TEST_FINISHED_NAMED('MKS422_Range_937B');
 
     16:
-    This^.i_iPRESS_R := V_TO_INT(2.4);
+    This^.i_iPRESS_R := F_V_TO_INT(2.4);
     This^.fb_MKS422.b937A:=TRUE;
 
     20:
@@ -67,7 +67,7 @@ Case This^.cycle of
 
 
     21:
-    This^.i_iPRESS_R :=  V_TO_INT(0.1);
+    This^.i_iPRESS_R :=  F_V_TO_INT(0.1);
 
 
     24:
@@ -83,7 +83,7 @@ Case This^.cycle of
 
 
     25:
-    This^.i_iPRESS_R :=  V_TO_INT(10);
+    This^.i_iPRESS_R :=  F_V_TO_INT(10);
 
 
     29:

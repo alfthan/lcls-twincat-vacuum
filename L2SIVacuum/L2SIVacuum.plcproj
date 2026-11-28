@@ -558,7 +558,7 @@
     <Compile Include="POUs\Serial drivers\Pumps\Pfeiffer\F_CalcPfeifferCheckSum.TcPOU">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="UnitTests\Functions\V_TO_INT.TcPOU">
+    <Compile Include="UnitTests\Functions\F_V_TO_INT.TcPOU">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="UnitTests\Gauges\FB_GCC_Test.TcPOU">
