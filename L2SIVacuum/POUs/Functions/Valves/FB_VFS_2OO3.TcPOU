@@ -81,25 +81,126 @@ VAR
     i_xVetoValveOpenDO AT%I* : BOOL; (*Link to VFS Interface*)
     i_xVetoValveClosed AT%I* : BOOL; (*Link to VFS Interface*)
 
-    (*Interface with external system*)
+    (*Interface with external system.*)
+    (* Every member of this section crosses the EPICS/VFS boundary: the values are
+       linked over the fast-task soft I/O to FB_VFS_2OO3Interface, which owns the
+       IOC records. The pytmc pragmas below state the PV name and io direction of
+       each of those signals, reusing the names already published for this valve
+       (ST_VFS / ST_ValveBase members and FB_VFS_2OO3Interface). Commands are
+       read/write (io), readbacks, states and counters are read-only (i).
+       i_xPress_OK_IG1..3 and the VETO links stay untagged on purpose: they only
+       copy IG.xPRESS_OK and the veto valve signals, whose records are published
+       by the ST_VG / ST_VGC instances. *)
+    {attribute 'pytmc' := '
+        pv: VFS_2OO3_MODE
+        io: io
+    '}
     i_e2OO3_MODE       AT%I* : E_2OO3_MODE; (*Link to VFS Interface, 2oo3 mode selector*)
+    {attribute 'pytmc' := '
+        pv: VFS_RESET_FAULT_COUNTER
+        io: io
+    '}
     i_ResetFaultCounter AT%I* : BOOL; (*Link to VFS Interface, FaultCounter Reset*)
     i_xPress_OK_IG1    AT%I* : BOOL; (*Link to VFS Interface, IG.xPRESS_OK, to make sure that the device is connected*)
     i_xPress_OK_IG2    AT%I* : BOOL; (*Link to VFS Interface, IG.xPRESS_OK, to make sure that the device is connected*)
     i_xPress_OK_IG3    AT%I* : BOOL; (*Link to VFS Interface, IG.xPRESS_OK, to make sure that the device is connected*)
+    {attribute 'pytmc' := '
+        pv: OPN_SW
+        field: ZNAM CLOSE
+        field: ONAM OPEN
+        io: io
+    '}
     i_xOPN_SW          AT%I* : BOOL; (*Link to VFS Interface, external open signal e.g epics*)
+    {attribute 'pytmc' := '
+        pv: CLS_SW
+        field: ZNAM FALSE
+        field: ONAM CLOSE
+        io: io
+    '}
     i_xCLS_SW          AT%I* : BOOL; (*Link to VFS Interface, external close signal e.g epics*)
+    {attribute 'pytmc' := '
+        pv: ALM_RST
+        io: io
+    '}
     i_xVAC_FAULT_Reset AT%I* : BOOL; (*Link to VFS Interface Valve Vacuum OK, is set to False when there is Vacuum Fault*)
+    {attribute 'pytmc' := '
+        pv: OVRD_ON
+        field: ZNAM Override OFF
+        field: ONAM Override ON
+        io: io
+    '}
     i_xOverrideMode    AT%I* : BOOL; (*Link to VFS Interface, To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
+    {attribute 'pytmc' := '
+        pv: FORCE_OPN
+        field: ZNAM FALSE
+        field: ONAM FORCE OPEN
+        io: io
+    '}
     i_xOverrideOpen    AT%I* : BOOL; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: TRIG
+        field: ZNAM TRIG_OFF
+        field: ONAM TRIG_ON
+        io: i
+    '}
     q_xTrigger         AT%Q* : BOOL; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: OPN_DI
+        field: ZNAM FALSE
+        field: ONAM OPEN
+        io: i
+    '}
     q_xVFS_Open        AT%Q* : BOOL; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: CLS_DI
+        field: ZNAM FALSE
+        field: ONAM CLOSE
+        io: i
+    '}
     q_xVFS_Closed      AT%Q* : BOOL; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: VAC_FAULT_OK
+        field: ZNAM FAULT
+        field: ONAM FAULT OK
+        io: i
+    '}
     q_xVAC_FAULT_OK    AT%Q* : BOOL; (*Link to VFS Interface, Valve Vacuum OK, is set to False when there is Vacuum Fault*)
+    {attribute 'pytmc' := '
+        pv: MPS_FAULT_OK
+        field: ZNAM MPS FAULT
+        field: ONAM MPS OK
+        io: i
+    '}
     q_xMPS_OK          AT%Q* : BOOL; (*Link to VFS Interface, MPS Fault OK, is set when the Valve is Open and there is no trigger*)
+    {attribute 'pytmc' := '
+        pv: STATE
+        field: ZRST Vented
+        field: ONST At Vacuum
+        field: TWST Differential Pressure
+        field: THST Lost Vacuum
+        field: FRST Ext Fault
+        field: FVST AT Vacuum
+        field: SXST Triggered
+        field: SVST Vacuum Fault
+        field: EIST Close Timeout
+        field: NIST Open Timeout
+        io: i
+    '}
     q_eVFS_State       AT%Q* : E_VGC; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: FLT_COUNT_IG1
+        io: i
+    '}
     q_nFltCount_IG1    AT%Q* : UINT; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: FLT_COUNT_IG2
+        io: i
+    '}
     q_nFltCount_IG2    AT%Q* : UINT; (*Link to VFS Interface*)
+    {attribute 'pytmc' := '
+        pv: FLT_COUNT_IG3
+        io: i
+    '}
     q_nFltCount_IG3    AT%Q* : UINT; (*Link to VFS Interface*)
 END_VAR
 VAR PERSISTENT
