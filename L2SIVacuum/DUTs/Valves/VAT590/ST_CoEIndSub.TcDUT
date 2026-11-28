@@ -2,9 +2,39 @@
 <TcPlcObject Version="1.1.0.1">
   <DUT Name="ST_CoEIndSub" Id="{62fd4c96-1a38-4aeb-82f8-1dcf9193e68a}">
     <Declaration><![CDATA[TYPE ST_CoEIndSub :
+
+(*
+    Purpose: CoE (CANopen over EtherCAT) object dictionary address of one
+    VAT590 needle-valve controller parameter, carried as the index/subindex pair
+    that the CoE read and write services address.
+
+    Usage: FB_VCN_VAT590 (POUs/Functions/Valves/FB_VCN_VAT590.TcPOU) holds one
+    ST_CoEIndSub constant per controller parameter it exchanges - cPressCtrl
+    16#2199, the adaptive-downstream and fixed controller parameters 16#219A to
+    16#21B3, the soft-pump parameters 16#21B9 to 16#21BC and the two position
+    limits 16#56B3 / 16#56B4 - and copies their nIndex / nSubIndex into fbCoeRead
+    (FB_CoERead_ByDriveRef) and fbCoeWrite (FB_CoEWrite_ByDriveRef) of
+    Tc2_EtherCAT on every exchange. FB_CoE_FastRead in LCLSGeneral passes the same
+    pair on to FB_CoERead_ByDriveRef, the index being the 8010 in 8010:12 and the
+    subindex the 12.
+
+    Objectives: state that the pair is a raw object dictionary address and not a
+    physical quantity, so that a further parameter is added by looking up its
+    index in the VAT590 CoE documentation instead of copying a literal, and so
+    that these values are never scaled or compared against a limit.
+
+    History:
+      2022-04-10  Janez Govednik <janezg@slac.stanford.edu>: created with the CoE
+                  interface of FB_VCN_VAT590 (commit 8d44a64), without a header
+                  and without a comment on either member.
+      2026-11-28  Header and member comments added; no member, type, order or
+                  default value changed (audit finding #584, convention
+                  conv_321640e095c0, task #458).
+*)
+
 STRUCT
-    nIndex : WORD;
-    nSubIndex : BYTE;
+    nIndex : WORD;    // CoE object dictionary index, hexadecimal (e.g. 16#2199); raw address, unitless
+    nSubIndex : BYTE; // CoE object dictionary subindex within nIndex, 0 = whole object; raw address, unitless
 END_STRUCT
 END_TYPE
 ]]></Declaration>
