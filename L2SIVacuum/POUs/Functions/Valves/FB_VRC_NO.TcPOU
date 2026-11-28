@@ -100,14 +100,14 @@ iq_stValve.q_xOPN_DO := NOT q_xCLS_DO;
 ///Check valve moving position timout
 IF NOT iq_stValve.i_xClsLS AND tCLStimeout.Q THEN
     iq_stValve.bErrorPresent := TRUE;
-    //iq_stValve.sErrorMessage := ' Close Timeout';
+    iq_stValve.sErrorMessage := ' Close Timeout';
 ELSIF NOT iq_stValve.i_xOpnLS AND tOPNtimeout.Q THEN
     iq_stValve.bErrorPresent := TRUE;
-    //iq_stValve.sErrorMessage := ' Open Timeout';
+    iq_stValve.sErrorMessage := ' Open Timeout';
 END_IF
 IF (iq_stValve.eState=INVALID) THEN
     iq_stValve.bErrorPresent := TRUE;
-    //iq_stValve.sErrorMessage := CONCAT(sPath,' Invalid Valve Position');
+    iq_stValve.sErrorMessage := CONCAT(sPath,' Invalid Valve Position');
 END_IF
 
 (*Timers*)
@@ -134,6 +134,16 @@ iq_stValve.xOverrideMode := i_xOverrideMode;
 (*outputs*)
 iq_stValve.q_xCLS_DO := q_xCLS_DO;
 ]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="ACT_Logger" Id="{fd53ad46-1114-413f-be5c-22faef9601ee}">
+      <Implementation>
+        <ST><![CDATA[// Log a newly raised fault together with the message that names its cause.
+// The fault is latched by the main body; this action only reports it.
+tErrorPresent(CLK := iq_stValve.bErrorPresent);
+IF tErrorPresent.Q THEN
+    fbLogger(sMsg := iq_stValve.sErrorMessage, eSevr := TcEventSeverity.Warning);
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Action Name="ACT_ResetAlarms" Id="{43b4539e-05f9-4647-acc6-2ecda35caef2}">

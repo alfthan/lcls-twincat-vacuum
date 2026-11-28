@@ -93,14 +93,14 @@ iq_stValve.q_xOPN_DO := NOT q_xCLS_DO;
 ///Check valve moving position timout
 IF NOT iq_stValve.i_xClsLS AND tCLStimeout.Q THEN
     iq_stValve.bErrorPresent := TRUE;
-    //iq_stValve.sErrorMessage := ' Close Timeout';
+    iq_stValve.sErrorMessage := ' Close Timeout';
 ELSIF NOT iq_stValve.i_xOpnLS AND tOPNtimeout.Q THEN
     iq_stValve.bErrorPresent := TRUE;
-    //iq_stValve.sErrorMessage := ' Open Timeout';
+    iq_stValve.sErrorMessage := ' Open Timeout';
 END_IF
 IF (iq_stValve.eState=INVALID) THEN
     iq_stValve.bErrorPresent := TRUE;
-    //iq_stValve.sErrorMessage := CONCAT(sPath,' Invalid Valve Position');
+    iq_stValve.sErrorMessage := CONCAT(sPath,' Invalid Valve Position');
 END_IF
 
 (*Timers*)
