@@ -3,22 +3,40 @@
   <DUT Name="ST_GeneralControlSP" Id="{5ce17432-0e91-4ebe-a55f-dcffebe2eede}">
     <Declaration><![CDATA[TYPE ST_GeneralControlSP :
 STRUCT
-    Bit0ExecuteZero: BIT;
-    Bit1Reserved : BIT;
-    Bit2PingPongTxBit : BIT;
-    Bit3Reserved : BIT;
-    Bit4AccessMode : BIT;
-    Bit5Reserved : BIT;
-    Bit6Reserved : BIT;
-    Bit7Reserved : BIT;
-    Bit8Reserved : BIT;
-    Bit9Reserved : BIT;
-    Bit10Reserved : BIT;
-    Bit11Reserved : BIT;
-    Bit12Reserved : BIT;
-    Bit13Reserved : BIT;
-    Bit14Reserved : BIT;
-    Bit15Reserved : BIT;
+    (* ST_GeneralControlSP - VAT590 EtherCAT "General Control" setpoint
+    Purpose
+        Holds the 16 bit control word of a VAT590 valve controller, one BIT member
+        per control flag. The struct is mapped as a whole onto the valve's EtherCAT
+        output process data, so member Bit<n> is bit n of that WORD. Every member
+        is a single bit flag, so no engineering units apply anywhere in the struct.
+    Usage
+        Written by FB_VCN_VAT590 (action ACT_WriteToOutput) and linked to the VAT590
+        General Control setpoint PDO. Only Bit0ExecuteZero and Bit4AccessMode are
+        driven by the FB; all other members are left FALSE.
+    Objectives
+        Record the vendor bit assignment so maintainers cannot confuse the zero,
+        ping-pong handshake and access-mode flags, and so the unused members are
+        known to be reserved by VAT rather than free for reuse.
+    History
+        Janez Govednik 2022-03-17 - VAT590 interface added (vendor bit layout).
+        taio-generic-0 2026-11-28 - documented the meaning of every control bit.
+    *)
+    Bit0ExecuteZero: BIT; // Bit 0 - execute the zero (calibration) function: TRUE requests it, FALSE releases it. Driven from ST_VCN_VAT590.bZero; FB_VCN_VAT590 clears it after 1 s or when the valve reports zero disabled.
+    Bit1Reserved : BIT; // Bit 1 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit2PingPongTxBit : BIT; // Bit 2 - ping-pong handshake, transmit direction (PLC -> valve): toggled with every new setpoint frame so the valve can detect fresh process data; the valve echoes the received state in ST_GeneralStatus.Bit2PingPongRxBit. Not driven by FB_VCN_VAT590 here, so it stays FALSE.
+    Bit3Reserved : BIT; // Bit 3 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit4AccessMode : BIT; // Bit 4 - remote access-mode request: FB_VCN_VAT590 toggles it (after a 500 ms qualification) until the mode reported by the valve matches the requested E_VAT590_AccessMode (0 = LOCAL, 1 = REMOTE, 2 = LOCKED); the mode in force is reported in ST_GeneralStatus.Bit7AccessModeBit0 / Bit8AccessModeBit1.
+    Bit5Reserved : BIT; // Bit 5 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit6Reserved : BIT; // Bit 6 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit7Reserved : BIT; // Bit 7 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit8Reserved : BIT; // Bit 8 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit9Reserved : BIT; // Bit 9 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit10Reserved : BIT; // Bit 10 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit11Reserved : BIT; // Bit 11 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit12Reserved : BIT; // Bit 12 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit13Reserved : BIT; // Bit 13 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit14Reserved : BIT; // Bit 14 - reserved by VAT, not evaluated by the controller; drive FALSE.
+    Bit15Reserved : BIT; // Bit 15 - reserved by VAT, not evaluated by the controller; drive FALSE.
 END_STRUCT
 END_TYPE
 ]]></Declaration>
