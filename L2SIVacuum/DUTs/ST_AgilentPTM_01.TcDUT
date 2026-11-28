@@ -2,6 +2,51 @@
 <TcPlcObject>
   <DUT Name="ST_AgilentPTM_01" Id="{a938abf6-36f3-4107-b22c-ed5b703ad258}">
     <Declaration><![CDATA[TYPE ST_AgilentPTM_01 EXTENDS ST_PTM :
+
+(*
+    Purpose: interface struct for an Agilent (Varian) turbo pump controller, as
+    seen by the pump function blocks in this library. It extends the ST_PTM
+    supervisory fields (run/reset controls, fault/warn/alarm readbacks, backing
+    and inlet pressure setpoints, state, current/temperature monitors, logger)
+    with the Agilent-specific discrete I/O: the START, R1 (setpoint related to
+    frequency) and R2 (setpoint related to power) inputs, the LSPD low-speed
+    mode input and its matching q_xLSpd / q_xSS outputs, the pump fault lock
+    pair, and a run-interlock output.
+
+    Usage: ST_AgilentPTM_01 is the older of the two Agilent interface structs.
+    ST_AgilentPTM (DUTs/Pumps/ST_AgilentPTM.TcDUT) is the one in service: it adds
+    the pytmc pragmas, the error string and the power monitor, which this struct
+    does not carry, so the two are not interchangeable. Nothing in this
+    repository references ST_AgilentPTM_01 and it is not a <Compile> item in
+    L2SIVacuum.plcproj, so TwinCAT does not compile it today. Treat it as the
+    historical definition of the Agilent pump interface: add it to the project
+    and to a driver before anything relies on it.
+
+    Objectives: keep the Agilent pump's incoming and outgoing signals readable
+    in one place, so which signals a driver has to drive or read - and in which
+    units - is obvious without reverse-engineering a POU.
+
+    Notes on the declaration (no declaration was changed to add this comment):
+    - eState, rBackingPressureSP and rInletPressureSP repeat declarations that
+      the ST_PTM base already provides. The inlet setpoint default differs (0.5
+      Torr here, 0.02 Torr in the base), so 0.02 Torr must not be assumed for
+      this type. TwinCAT acceptance of the repeated names is untested because
+      the file is not compiled.
+    - i_xPumpLockReset does not exist in ST_AgilentPTM, which uses the inherited
+      ST_PTM.xResetSW for the same job.
+    - The rest of the interface is inherited from ST_PTM and not repeated here:
+      xRunSW, xResetSW, q_RunDO, xExtRunOk, i_xAccel, i_xAtSpd, i_diCurSpd,
+      xCommTimeout, i_xFault, i_xWarn, i_xALARM, xActive, iPumpGrp, rForelineSP,
+      i_rCurrentMon, i_rTempMon and xLog.
+
+    History:
+      2018-10-12  Maggie <mghaly@slac.stanford.edu>: created, committed as
+                  3fb2c8e "First Release", with no header block and no comment
+                  on eState or on the pressure setpoints.
+      2026-11-28  Header block and member comments added; no member, type or
+                  default value changed (audit finding #580, task #431).
+*)
+
 STRUCT
 
 (* Inputs *)
@@ -33,17 +78,30 @@ STRUCT
     (*Soft start *)
     q_xSS   	:  BOOL;
 
-    (* Run interlock*)
+    (* Run interlock *)
+    (* Output to the pump: TRUE while the run interlock chain is made *)
     q_xIlk : BOOL;
 
+    (* Pump state, on the E_PumpState enumeration of the ST_PTM base:
+        pumpSTOPPED  = 0  pump idle and available
+        pumpSTARTING = 1  start sequence in progress
+        pumpRUNNING  = 2  at speed / running
+        pumpFAULT    = 3  faulted
+        pumpSTOPPING = 4  spin-down in progress
+    *)
     eState	:	E_PumpState;
 
+    (* Backing (foreline) pressure setpoint [Torr], default 0.01 Torr *)
     rBackingPressureSP : REAL := 0.01;
+    (* Inlet (chamber) pressure setpoint [Torr], default 0.5 Torr *)
     rInletPressureSP : REAL := 0.5;
 
 
     (*pump Lock*)
+    (* Latched pump fault lock: TRUE locks the pump out until reset *)
     q_xPumpFaultLock : BOOL := FALSE;
+    (* Reset request that clears the fault lock above (ST_AgilentPTM uses
+       the inherited ST_PTM.xResetSW for the same job) *)
     i_xPumpLockReset: BOOL := FALSE;
 
 
