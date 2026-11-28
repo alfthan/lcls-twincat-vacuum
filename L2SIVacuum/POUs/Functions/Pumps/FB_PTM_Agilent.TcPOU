@@ -69,6 +69,17 @@ END_VAR
 //iq_stPtm.xExtRunOk := i_xExtILKOk;
 
 (* state machine *)
+
+(* Steps:  0 stop and reset outputs, 10 idle waiting for the run switch,
+           20 waiting for the START status line, 40 waiting for the R1 status line,
+           50 running, 60 running with R1 lost, 90/95 latched fault.
+   Every wait is bounded by a timer that is armed in the timer section below; a timer
+   expiry latches iq_stPtm.xPumpFaultLock and a distinct nErrorCode so the block cannot
+   hang in a wait state, and the fault only clears through iq_stPtm.xResetSW.
+       950 : START status line not received within tTimeOutDuration (step 20)
+       930 : R1 status line not received within tTimeOutDuration (step 40)
+       920 : R1 lost too often / too long while running       (step 50/60)
+       900 : pump controller fault input                       (interrupt) *)
 CASE (step) OF
 (*Pump Stopped State*)
     0: // Pump Stopped State
@@ -80,7 +91,10 @@ CASE (step) OF
         //Reset timer
         tFaultWindowElapsed.IN := FALSE;
         nR1Fault := 0;
-        iq_stPtm.eState := pumpSTOPPED;
+        // A latched fault keeps reporting pumpFAULT (and its error message) until reset
+        IF NOT iq_stPtm.xPumpFaultLock THEN
+            iq_stPtm.eState := pumpSTOPPED;
+        END_IF
         step :=10;
 
 (*Idle State waiting to start*)
@@ -97,8 +111,11 @@ CASE (step) OF
         iq_stPtm.eState := pumpSTARTING;
         step:= 40;
         ELSIF tStartTimeOut.Q THEN
-            step:=90; // or fault state
-            nErrorCode:=950;
+            // START status line never came back: latch the fault so the pump cannot
+            // restart until the operator resets it, and keep 950 as the error code
+            iq_stPtm.xPumpFaultLock := TRUE;
+            nErrorCode:=950; // START signal time out while starting.
+            step:=90; // fault state
         END_IF
         // should check R1 ?? check Fault condition?
 
@@ -113,9 +130,10 @@ CASE (step) OF
             step:= 50;
         END_IF
         IF tR1TimeOut.Q THEN
-            step:= 90;
+            // R1 (at speed) never came back: latch the fault until reset
             iq_stPtm.xPumpFaultLock := TRUE;
             nErrorCode:= 930; // R1 Signal at Start time out.
+            step:= 90;
            // fbLogger(sMsg:='Timeout: Pump could not achieve running speed.', eSevr:=TcEventSeverity.Warning);
         END_IF
 
@@ -124,7 +142,8 @@ CASE (step) OF
         IF NOT iq_stPtm.i_xR1 THEN
             nR1Fault:= nR1Fault+1 ;
             tFaultWindowElapsed.IN := TRUE; ///
-            //tR1Fault.IN := TRUE;
+            // tR1Fault is armed by the timer section below while step = 60 and resets
+            // when R1 returns; its expiry latches error 920.
             step :=60;
         END_IF
 
@@ -209,10 +228,13 @@ END_IF
 *)
 
 (* Timers *)
-tFaultWindowElapsed(PT:=tFaultWindowDuration);
-tR1Fault(IN:= (step = 60), PT:=tR1FaultDuration);
-tStartTimeOut(IN := (step=20), PT:=tTimeOutDuration);
-tR1TimeOut(IN := (step=40), PT:=tTimeOutDuration);
+(* The .IN of each wait timer is tied to the step that waits, so the timer is armed on
+   entry to that step and reset by the same call as soon as the step is left.
+   Expiry is handled in the CASE above and always latches a fault plus an error code. *)
+tFaultWindowElapsed(PT:=tFaultWindowDuration); // R1 loss counting window (steps 50/60)
+tR1Fault(IN:= (step = 60), PT:=tR1FaultDuration); // R1 lost while running -> 920
+tStartTimeOut(IN := (step=20), PT:=tTimeOutDuration); // waiting for START -> 950
+tR1TimeOut(IN := (step=40), PT:=tTimeOutDuration); // waiting for R1 -> 930
 (* IO Mapping*)
 IO();
 (*Assign Error Message*)
@@ -311,7 +333,7 @@ END_VAR
         <ST><![CDATA[IF (eState = pumpFAULT ) THEN
     CASE nErrorCode OF
         950:
-            ErrorMessage := 'Pump Starting Fault';
+            ErrorMessage := 'Pump start timeout - no START status signal';
         930:
             ErrorMessage := 'Pump could not achieve running speed';
 
