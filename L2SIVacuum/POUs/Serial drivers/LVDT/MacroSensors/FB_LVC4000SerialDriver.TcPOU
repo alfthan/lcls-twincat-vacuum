@@ -86,6 +86,8 @@ fbTrans(
     iq_stSerialTXBuffer:= iq_stSerialTXBuffer );
 
 iq_stLVC4000.xTimeout := fbtrans.q_xTimeout;
+// Publish the timeout through the declared output so callers can log it
+q_xTimeout := fbtrans.q_xTimeout;
 q_sLastSentString := fbtrans.q_sLastSentString;
 q_sLastReceivedString := fbtrans.q_sLastReceivedString;]]></ST>
     </Implementation>

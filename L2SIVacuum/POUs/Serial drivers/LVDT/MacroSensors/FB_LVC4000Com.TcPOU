@@ -12,6 +12,16 @@ Usage:
 Pass the array of your LVC4000 structures to the FB, along with your serial RX and TX buffers.
 Also pass the number of LVC-4000 connected to the bus. This must be less than gcMaxLVC4000.
 
+Diagnostics:
+Every failed transaction is reported through the shared logger (FB_LogMessage)
+once per attempt, so operators and log consumers can see which conditioner
+failed and why. A reply timeout is logged as critical, any other transaction
+failure as an error.
+
+History:
+A. Wallace 2016-07-20: Original version.
+2026-11-28: Log failed and timed-out serial transactions through FB_LogMessage.
+
 *)
 VAR_IN_OUT
     iq_astLVC4000: ARRAY[1..gcMaxLVC4000] OF ST_SerLVC4000;
@@ -25,6 +35,12 @@ END_VAR
 VAR
     iUnit: INT := 1;
     tTimeOut: TIME := TIME#1s0ms;
+    (* Diagnostics - all events are emitted through the shared logger *)
+    fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.VACUUM); // Project logger interface
+    fbFormatString : FB_FormatString; // Builds the message text for fbLogger
+    sLogMessage : T_MaxString; // Message text handed to fbLogger
+    sLogErrorFormat : T_MaxString := 'LVC4000 address %d: serial transaction failed (%s)'; // Format for a failed transaction
+    sLogTimeoutFormat : T_MaxString := 'LVC4000 address %d: no reply within the timeout period'; // Format for a reply timeout
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* This program is called from Serial PTM IO *)
@@ -43,6 +59,25 @@ afbLVC4000SerialDriver[iUnit](
 IF afbLVC4000SerialDriver[iUnit].q_xDone
 OR afbLVC4000SerialDriver[iUnit].q_xError
 THEN
+        (* This branch runs once per finished transaction, so each failure is
+           reported exactly once instead of on every cycle *)
+        IF afbLVC4000SerialDriver[iUnit].q_xError THEN
+            IF afbLVC4000SerialDriver[iUnit].q_xTimeout THEN
+                (* Conditioner stopped answering - treat as a lost device *)
+                fbFormatString( sformat:= sLogTimeoutFormat,
+                    arg1:= F_INT(iq_astLVC4000[iUnit].iAddr),
+                    sOut=> sLogMessage );
+                fbLogger( sMsg:= sLogMessage, eSevr:= TcEventSeverity.Critical );
+            ELSE
+                (* Transaction failed for another reason - pass on the detail *)
+                fbFormatString( sformat:= sLogErrorFormat,
+                    arg1:= F_INT(iq_astLVC4000[iUnit].iAddr),
+                    arg2:= F_STRING(afbLVC4000SerialDriver[iUnit].q_sResult),
+                    sOut=> sLogMessage );
+                fbLogger( sMsg:= sLogMessage, eSevr:= TcEventSeverity.Error );
+            END_IF
+        END_IF
+
         (* reset for next time *)
         afbLVC4000SerialDriver[iUnit]( i_xExecute:= FALSE, iq_stLVC4000:=iq_astLVC4000[iUnit], iq_stSerialRXBuffer:= SerialRXBuffer, iq_stSerialTXBuffer:=  SerialTXBuffer);
         (* select next pump *)
