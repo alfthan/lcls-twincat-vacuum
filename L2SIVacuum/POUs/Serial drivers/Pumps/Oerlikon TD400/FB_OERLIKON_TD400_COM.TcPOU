@@ -1,28 +1,100 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_OERLIKON_TD400_COM" Id="{c8ae72ef-e9c8-4596-8d8c-fcd5712999eb}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_OERLIKON_TD400_COM
+    <Declaration><![CDATA[(*
+FB_OERLIKON_TD400_COM - serial wrapper for the Oerlikon TD400 pump controller
+
+Purpose
+    Drive FB_TD400SerialDriver so that one request reads the complete TD400 parameter
+    set (P18/P19/P20/P24/P32/P171 plus the cyclic status words) over the RS-485 link
+    and writes the P24 setpoint when the caller has changed it.
+
+Usage
+    Call the block once per scan from the serial PTM IO program and pass the shared
+    RX/TX ComBuffer references plus the TD400 control struct. Execution is caller
+    controlled:
+    - Pulse i_xExecute TRUE for at least one scan to request one parameter scan.
+      The request is triggered on the rising edge of i_xExecute only, so holding
+      i_xExecute TRUE does not restart the sequence.
+    - q_xDone, q_xError, q_xTimeout and q_sResult are latched when the scan
+      terminates and stay latched until the caller pulses i_xAcknowledge. A new
+      request is ignored while a result is still unacknowledged, so a completion
+      or an error can never be lost.
+    - stTD400Status holds the parameter image produced by the last completed scan.
+    - A setpoint changed in stTD400Control.wSetSetpointFreq_P24 is written to the
+      controller on the next requested scan.
+
+Objectives
+    - no hard-coded driver execute and no self restart
+    - Done/Error/Timeout latched until acknowledged
+
+History
+    2026-11-28  Scirix Agent  Replace the free-running driver call with an
+                               i_xExecute rising-edge trigger and a dedicated
+                               i_xAcknowledge holding latch (finding #746).
+*)
+FUNCTION_BLOCK FB_OERLIKON_TD400_COM
 VAR_INPUT
-END_VAR
-VAR
-    tTimeOut : TIME := TIME#1S0MS;
-    fbTD400SerialDriver : FB_TD400SerialDriver;
-END_VAR
-VAR_IN_OUT
-    SerialRXBuffer : ComBuffer;
-    SerialTXBuffer : ComBuffer;
-    stTD400Control : ST_TD400Control;
+    /// Rising edge requests one complete parameter scan. The falling edge only
+    /// arms the next request; it does not abort the scan in progress.
+    i_xExecute: BOOL;
+    /// Rising edge clears the latched q_xDone / q_xError / q_xTimeout / q_sResult.
+    i_xAcknowledge: BOOL;
 END_VAR
 VAR_OUTPUT
-    stTD400Status : ST_TD400Status;
+    /// Latched: the parameter scan completed. Cleared by i_xAcknowledge.
+    q_xDone: BOOL;
+    /// Latched: the scan ended in a transaction or driver error. Cleared by i_xAcknowledge.
+    q_xError: BOOL;
+    /// Latched: the scan ended on a serial reply timeout. Cleared by i_xAcknowledge.
+    q_xTimeout: BOOL;
+    /// Error text of the last terminated scan, empty when q_xDone.
+    q_sResult: STRING(255);
+    /// Parameter image from the last completed scan.
+    stTD400Status: ST_TD400Status;
+END_VAR
+VAR
+    /// Maximum wait time for a single reply, and therefore the bound on one scan.
+    tTimeOut: TIME := TIME#1S0MS;
+    fbTD400SerialDriver: FB_TD400SerialDriver;
+    /// Rising edge of i_xExecute - starts one request.
+    rtExecute: R_TRIG;
+    /// Rising edge of i_xAcknowledge - clears the latched result.
+    rtAcknowledge: R_TRIG;
+    /// Request step: 0 = idle, 5 = arm the driver execute, 10 = scan in progress.
+    iStep: INT;
+END_VAR
+VAR_IN_OUT
+    SerialRXBuffer: ComBuffer;
+    SerialTXBuffer: ComBuffer;
+    stTD400Control: ST_TD400Control;
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[(* This program is called from Serial PTM IO *)
+      <ST><![CDATA[(* Acknowledge first, so a result latched by this same scan is not cleared again. *)
+rtAcknowledge(CLK:= i_xAcknowledge);
+IF rtAcknowledge.Q THEN
+    q_xDone := FALSE;
+    q_xError := FALSE;
+    q_xTimeout := FALSE;
+    q_sResult := '';
+END_IF
 
-(* scan the pumps one at a time *)//MG???
+(* One request per rising edge of i_xExecute, and only once the previous result has
+   been acknowledged. Holding i_xExecute TRUE does not restart the scan. *)
+rtExecute(CLK:= i_xExecute);
+IF rtExecute.Q
+    AND NOT (q_xDone OR q_xError OR q_xTimeout)
+    AND iStep = 0 THEN
+        q_sResult := '';
+        iStep := 5;
+END_IF
+
+(* The driver runs only while a request is in progress, so its own rising-edge
+   trigger fires once per request; dropping its execute when the scan terminates
+   resets it for the next request. *)
 fbTD400SerialDriver(
-    i_xExecute:= TRUE,
+    i_xExecute:= (iStep = 10),
     i_tTimeOut:= tTimeOut,
     i_wControlWord:= 16#0000,
     iq_stControl:= stTD400Control,
@@ -34,12 +106,27 @@ fbTD400SerialDriver(
     q_sResult=> ,
     q_stStatus=> stTD400Status);
 
-IF fbTD400SerialDriver.q_xDone
-    OR fbTD400SerialDriver.q_xError
-    OR fbTD400SerialDriver.q_xTimeout THEN
-        (* reset for next time *)
-        fbTD400SerialDriver(i_xExecute:= FALSE, iq_stSerialRXBuffer:= SerialRXBuffer, iq_stSerialTXBuffer:= SerialTXBuffer, iq_stControl:= stTD400Control);
-END_IF
+(* Latch the driver's terminal result. This runs after the driver call so a result
+   produced by this scan is read here instead of the stale one from before it. *)
+CASE iStep OF
+    0: (* idle - waiting for the next rising edge of i_xExecute *)
+        ;
+
+    5: (* arm - one scan with the driver execute low, so the driver always sees a
+          falling edge before the rising edge that starts the next request *)
+        iStep := 10;
+
+    10: (* request in progress - hold the driver execute and wait for its result *)
+        IF fbTD400SerialDriver.q_xDone
+            OR fbTD400SerialDriver.q_xError
+            OR fbTD400SerialDriver.q_xTimeout THEN
+                q_xDone := fbTD400SerialDriver.q_xDone;
+                q_xError := fbTD400SerialDriver.q_xError;
+                q_xTimeout := fbTD400SerialDriver.q_xTimeout;
+                q_sResult := fbTD400SerialDriver.q_sResult;
+                iStep := 0;
+        END_IF
+END_CASE
 ]]></ST>
     </Implementation>
   </POU>
