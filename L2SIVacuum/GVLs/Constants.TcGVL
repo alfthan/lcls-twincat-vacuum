@@ -4,6 +4,9 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    (* 5 V expressed in counts of the 0..10 V, 32767 count analog channels used in this library.
+       Full-scale command for the 0..5 V pump speed interface. *)
+    gc_diAnalog5VCounts :	DINT := 16383;
 END_VAR
 ]]></Declaration>
   </GVL>

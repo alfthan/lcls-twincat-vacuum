@@ -1,7 +1,17 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_Pump" Id="{00c4f02d-0992-44f0-9021-57d8126c2097}" SpecialFunc="None">
-    <Declaration><![CDATA[FUNCTION_BLOCK FB_Pump
+    <Declaration><![CDATA[(* Base function block for all vacuum pumps in this library.
+Owns the shared plumbing every pump variant needs: the shared logger instance, the
+persistent-data restore/write handshake and the helpers that sanitize setpoints before
+they are written to hardware. Concrete pumps (PTM, PIP, ...) extend this block and add
+only their device-specific conversions and run logic.
+
+History:
+2026-11-28 - Added SpeedSetPointAnalog so out-of-range speed requests are clamped instead of
+             silently leaving a stale analog command (audit finding #701).
+*)
+FUNCTION_BLOCK FB_Pump
 VAR
     // For logging
     fbLogger : FB_LogMessage := (eSubsystem:=E_SubSystem.VACUUM);
@@ -26,5 +36,40 @@ END_VAR
         <ST><![CDATA[]]></ST>
       </Implementation>
     </Action>
+    <Method Name="SpeedSetPointAnalog" Id="{7662b4c9-a17e-47dd-afbe-1f60aaa73442}">
+      <Declaration><![CDATA[METHOD PUBLIC SpeedSetPointAnalog : INT
+VAR_INPUT
+    diSpeedSet : DINT;  // Requested speed [Hz] as written by the operator
+    i_iMinSpeed : DINT; // Lowest speed the pump may be commanded to [Hz]
+    i_iMaxSpeed : DINT; // Highest speed the pump may be commanded to [Hz]
+END_VAR
+VAR_OUTPUT
+    q_xOutOfRange : BOOL; // TRUE while the request is outside the window or the window itself is invalid
+END_VAR
+VAR
+    diSpan : DINT;     // Commandable speed span: i_iMaxSpeed - i_iMinSpeed
+    diRelSpeed : DINT; // Requested speed after clamping, relative to i_iMinSpeed
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(* Clamp the requested speed into the configured window and scale it to analog command counts.
+   An out-of-range request is clamped and reported through q_xOutOfRange - it is never
+   silently dropped, so the analog speed command can neither keep a stale value nor follow
+   an unvalidated one. Callers log q_xOutOfRange on its rising edge.
+   Scaling: 0 counts at i_iMinSpeed, gc_diAnalog5VCounts at i_iMaxSpeed, because the ETC
+   speed command spans 0..5 V over the configured min..max speed range.
+   History: 2026-11-28 - Created for audit finding #701 (speed setpoint had no ELSE arm). *)
+diSpan := i_iMaxSpeed - i_iMinSpeed;
+q_xOutOfRange := (diSpeedSet < i_iMinSpeed) OR (diSpeedSet > i_iMaxSpeed) OR (diSpan <= 0);
+
+IF diSpan > 0 THEN
+    diRelSpeed := LIMIT(i_iMinSpeed, diSpeedSet, i_iMaxSpeed) - i_iMinSpeed;
+    SpeedSetPointAnalog := DINT_TO_INT(diRelSpeed * Constants.gc_diAnalog5VCounts / diSpan);
+ELSE
+    (* Misconfigured window: no speed can be validated, so command 0 V instead *)
+    SpeedSetPointAnalog := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
   </POU>
 </TcPlcObject>

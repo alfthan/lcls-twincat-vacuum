@@ -2,7 +2,14 @@
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_PTM_Ebara_010M" Id="{db9fdbdf-85bb-4e58-96cc-808f2a65a0e5}" SpecialFunc="None">
     <Declaration><![CDATA[(* This function block does basic controls FOR the Ebara Turbo pump connected to the ETC010M Controller.
- Turns off pump in the event of errors/ warnings. Provides interlocking interface.*)
+ Turns off pump in the event of errors/ warnings. Provides interlocking interface.
+
+ History:
+ Nov 2018 - M. Ghaly (modified the original Scott Stubbs / Alex W. block).
+ 2026-11-28 - Clamp the requested speed into i_iMinSpeed..i_iMaxSpeed before scaling and raise an
+              explicit logger warning on an out-of-range request, instead of leaving the analog
+              speed command at its previous value (audit finding #701).
+*)
  {attribute 'no_check'}
 FUNCTION_BLOCK FB_PTM_Ebara_010M EXTENDS FB_Pump
 VAR_IN_OUT
@@ -46,6 +53,9 @@ VAR
     q_xSetSpeed AT %Q* : BOOL;
     q_iSpeedSet AT %Q* :INT;	//Link to analog Output
 
+    (* Speed setpoint validation *)
+    xSpeedSetOutOfRange : BOOL;   // TRUE while the requested speed or the configured speed window is invalid
+    tSpeedSetOutOfRange : R_TRIG; // Detects the start of an out-of-range request so it is logged once per occurrence
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[(* Ebara ETC control FB
@@ -158,10 +168,14 @@ ACT_Persistent();]]></ST>
     q_xSetSpeed := iq_stPTM.iq_xSpeedSet;
 
 
-(*Validate Set Speed within range *)
-IF iq_stPTM.q_iSpeedSet  >= i_iMinSpeed AND iq_stPTM.q_iSpeedSet  <=i_iMaxSpeed THEN
-    q_iSpeedSet  := LIMIT(0, DINT_TO_INT((iq_stPTM.q_iSpeedSet - i_iMinSpeed) / i_iMaxSpeed *16383/5),16383); //Max 5V
-END_IF
+(*Validate Set Speed within range - the request is clamped into i_iMinSpeed..i_iMaxSpeed and the
+analog command is written on every scan, so an out-of-range request can neither keep a stale
+value on the output nor reach the controller unscaled. *)
+q_iSpeedSet := SpeedSetPointAnalog(
+    diSpeedSet := iq_stPTM.q_iSpeedSet,
+    i_iMinSpeed := i_iMinSpeed,
+    i_iMaxSpeed := i_iMaxSpeed,
+    q_xOutOfRange => xSpeedSetOutOfRange); //Max output 5V
 
 
 
@@ -203,6 +217,12 @@ IF ePrevState <> iq_stPTM.eState THEN
 // Log FAULT
 tFault(CLK:= iq_stPTM.i_xNCFault);
 IF tFault.Q THEN fbLogger(sMsg:='Pump Lost Alarm OK bit', eSevr:=TcEventSeverity.Critical); END_IF
+
+// Log an out-of-range speed request once per occurrence
+tSpeedSetOutOfRange(CLK:= xSpeedSetOutOfRange);
+IF tSpeedSetOutOfRange.Q THEN
+    fbLogger(sMsg:='Requested pump speed outside i_iMinSpeed..i_iMaxSpeed; analog speed command clamped.', eSevr:=TcEventSeverity.Warning);
+END_IF
 
 
 

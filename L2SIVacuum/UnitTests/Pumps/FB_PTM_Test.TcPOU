@@ -9,6 +9,7 @@ END_VAR
 VAR
     fb_TwisTorr: FB_PTM_TwisTorr;
     fb_PTM_Ebara_010M:FB_PTM_Ebara_010M;
+    fb_Pump: FB_Pump; // Shared pump base block, provides SpeedSetPointAnalog
 
     cycle:INT :=0;
     (*IO*)
@@ -25,6 +26,7 @@ END_VAR
       <ST><![CDATA[M_INIT();
 M_Interlock();
 M_PTM_EBARA();
+M_SpeedSetpoint();
 cycle:=cycle+1;]]></ST>
     </Implementation>
     <Method Name="M_INIT" Id="{09056c01-bd86-4734-bc9b-0823ada814a0}">
@@ -128,6 +130,54 @@ IF( cycle = 10) THEN
 
 
 End_IF;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_SpeedSetpoint" Id="{e299addd-24a7-4cd2-8903-e372dff86a26}">
+      <Declaration><![CDATA[(* Exercise the speed setpoint sanitizing shared by FB_PTM_Ebara_010M and FB_PTM_Ebara_011M.
+The requested speed lives in the VAR_OUTPUT interface struct and cannot be driven from here, so the
+FB_Pump.SpeedSetPointAnalog helper both blocks call for their analog speed command is tested directly. *)
+METHOD M_SpeedSetpoint
+VAR_INPUT
+END_VAR
+VAR
+    diExpected : DINT; // Expected analog speed command in counts
+    diActual   : DINT; // Actual analog speed command in counts
+    iCmd       : INT;  // Analog speed command returned by the helper
+    xOoR       : BOOL; // Out-of-range indication returned by the helper
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[TEST('PTM_SpeedSet_Above_Max_Clamped');
+iCmd := fb_Pump.SpeedSetPointAnalog(diSpeedSet:= 700, i_iMinSpeed:= 100, i_iMaxSpeed:= 560, q_xOutOfRange=> xOoR);
+diExpected := 16383; // Full scale = 5V, the top of the ETC speed command range
+diActual := INT_TO_DINT(iCmd);
+AssertEquals(diExpected, diActual, 'PTM speed command not clamped to i_iMaxSpeed');
+AssertTrue(xOoR, 'PTM out-of-range speed request not flagged');
+TEST_FINISHED_NAMED('PTM_SpeedSet_Above_Max_Clamped');
+
+TEST('PTM_SpeedSet_Below_Min_Clamped');
+iCmd := fb_Pump.SpeedSetPointAnalog(diSpeedSet:= 50, i_iMinSpeed:= 100, i_iMaxSpeed:= 560, q_xOutOfRange=> xOoR);
+diExpected := 0; // i_iMinSpeed maps to 0V
+diActual := INT_TO_DINT(iCmd);
+AssertEquals(diExpected, diActual, 'PTM speed command not clamped to i_iMinSpeed');
+AssertTrue(xOoR, 'PTM out-of-range speed request not flagged');
+TEST_FINISHED_NAMED('PTM_SpeedSet_Below_Min_Clamped');
+
+TEST('PTM_SpeedSet_MidSpan_Scaled');
+iCmd := fb_Pump.SpeedSetPointAnalog(diSpeedSet:= 330, i_iMinSpeed:= 100, i_iMaxSpeed:= 560, q_xOutOfRange=> xOoR);
+diExpected := 8191; // (330-100)/(560-100) * 16383, i.e. scaled over the span, not over i_iMaxSpeed
+diActual := INT_TO_DINT(iCmd);
+AssertEquals(diExpected, diActual, 'PTM speed command scaling is wrong');
+AssertFalse(xOoR, 'PTM in-range speed request flagged as out of range');
+TEST_FINISHED_NAMED('PTM_SpeedSet_MidSpan_Scaled');
+
+TEST('PTM_SpeedSet_InvalidWindow_Safe');
+iCmd := fb_Pump.SpeedSetPointAnalog(diSpeedSet:= 300, i_iMinSpeed:= 560, i_iMaxSpeed:= 100, q_xOutOfRange=> xOoR);
+diExpected := 0; // A misconfigured window must command 0V rather than divide by zero
+diActual := INT_TO_DINT(iCmd);
+AssertEquals(diExpected, diActual, 'PTM speed command not zeroed on an invalid speed window');
+AssertTrue(xOoR, 'PTM invalid speed window not flagged');
+TEST_FINISHED_NAMED('PTM_SpeedSet_InvalidWindow_Safe');]]></ST>
       </Implementation>
     </Method>
   </POU>
