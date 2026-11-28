@@ -6,6 +6,23 @@ Valve considers CLOSED when the LS is closed.
 This function block is interloked by an input (i_xExtILK_OK). This is so developers can interface with custom
 interlocking logic outside this function block.*)
 (* Note Interlock Logic is External *)
+
+    Objectives:
+        - Command the NC open solenoid from the operator open request and the external interlock
+          permit (i_xExtILK_OK -> iq_stValve.xOPN_OK). The permit is always in series with the output,
+          so no manual override can energise the coil while the permit is FALSE.
+        - Honour a manual override only after it has been requested continuously for tOvrd, and clear it
+          automatically (permit healthy for 10 s, global override off, or tOvrdMax elapsed).
+        - Report an external interlock fault (ERR_ExtFault) and drop the latched open request whenever the
+          permit is FALSE, whether or not an override is active.
+
+    History:
+        - 2026-11-28, TAIO: the manual override was ORed around the interlock permit in q_xOPN_DO, so a
+          qualified override plus the global override bit energised the NC coil open while the external
+          interlock was FALSE, while eVGC_State simultaneously reported ERR_ExtFault (audit finding #712).
+          The override now only replaces the operator open request, the permit stays in series with the
+          output, the interlock fault is reported while an override is active, and a qualified override
+          self-clears after tOvrdMax.
 {attribute 'no_check'}
 FUNCTION_BLOCK FB_VRC_NC_ClsLS EXTENDS FB_Valve
 VAR_IN_OUT
@@ -13,7 +30,9 @@ VAR_IN_OUT
 END_VAR
 VAR_INPUT
     i_xExtILK_OK : BOOL; //Connect to Interlock logic condition(e.g F_TURBO_VRC_ILK Function), otherwise, Set to True if the valve is not interlocked
-    i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
+    i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforced.
+                                The override only replaces the operator open request: it never bypasses the external interlock
+                                permit (i_xExtILK_OK -> iq_stValve.xOPN_OK), and a lost permit is still reported as an interlock fault*)
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -27,10 +46,13 @@ VAR
     sPath: STRING;
     xFirstPass	:	BOOL;
     fbFSInit		:	R_TRIG;
-    tonOvrd	:	TON;
-    tonDelOK : TON;
-    rtOK	:	R_TRIG;
-    tOvrd	:	TIME := T#10s;
+    tonOvrd	:	TON; (*Override qualification timer: the request must be present continuously for tOvrd before it is honored*)
+    tonDelOK : TON; (*Permit-healthy timer used to release a stale override*)
+    rtOK	:	R_TRIG; (*The open permit has been healthy for tOvrd*)
+    tonOvrdMax	:	TON; (*Maximum override duration timer*)
+    rtOvrdExpired	:	R_TRIG; (*Rising edge of the maximum override duration expiry*)
+    tOvrd	:	TIME := T#10s; (*Override qualification/release time*)
+    tOvrdMax	:	TIME := T#5M; (*Maximum time a qualified manual override stays active before it clears itself*)
     (* Timeouts*)
     tTimeOutDuration: TIME:= T#30S;
     tOPNtimeout: TON;
@@ -70,7 +92,9 @@ END_IF
 (*evaluate Valve open external interlock*)
 iq_stValve.xOPN_OK := i_xExtILK_OK;
 iq_stValve.xEXT_OK := i_xExtILK_OK;
-IF NOT iq_stValve.xOPN_OK and NOT tonOvrd.Q THEN
+(* The interlock fault is reported and the latched open request dropped whenever the external permit is FALSE,
+   whether or not a manual override is active: an override must never hide an interlock fault.*)
+IF NOT iq_stValve.xOPN_OK THEN
     iq_stValve.pv_xOPN_SW := FALSE;
     iq_stValve.eVGC_State := ERR_ExtFault;
 END_IF
@@ -83,7 +107,9 @@ END_IF
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+when the valve permission goes true for more than ten seconds consistently, remove override.
+The override is additionally bounded in time (tOvrdMax) and only ever replaces the operator open
+request: it is not a bypass of the external interlock permit
 *)
 
 tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=T#10S);
@@ -96,11 +122,23 @@ IF rtOK.Q AND iq_stValve.pv_xOvrdOpn THEN
 END_IF
 // Release the Force Open bit when the system override is false
 IF NOT(i_xOverrideMode) THEN  iq_stValve.pv_xOvrdOpn :=FALSE; END_IF
-//Override timer
+//Override qualification timer: the request must persist for tOvrd before it is honored
 tonOvrd(IN:=iq_stValve.pv_xOvrdOpn, PT:=tOvrd);
 
-(* Here's where the valve opens *)
-iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+(* Self-clearing override duration: a manual override never stays on indefinitely *)
+tonOvrdMax(IN:= tonOvrd.Q, PT:= tOvrdMax);
+rtOvrdExpired(CLK:= tonOvrdMax.Q);
+IF rtOvrdExpired.Q THEN
+    iq_stValve.pv_xOvrdOpn := FALSE;
+    //Log
+    fbLogger(sMsg:='Override cleared: maximum override duration elapsed', eSevr:=TcEventSeverity.Warning);
+END_IF
+
+(* Here's where the valve opens. The external interlock permit is in series with the output, so no open
+   command - operator request or manual override - can energise the NC coil while xOPN_OK is FALSE. The
+   qualified override only replaces the operator open request; it is never a way around the interlock, and
+   it is inhibited once its maximum duration has elapsed. *)
+iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW OR (tonOvrd.Q AND i_xOverrideMode AND NOT tonOvrdMax.Q)) AND iq_stValve.xOPN_OK;
 
 
 ///Check valve moving position timout
