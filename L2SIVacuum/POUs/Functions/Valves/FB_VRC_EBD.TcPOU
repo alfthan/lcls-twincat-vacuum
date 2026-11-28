@@ -10,7 +10,9 @@ VAR_IN_OUT
 END_VAR
 VAR_INPUT
     i_xExtILK_OK : BOOL; //Connect to Interlock logic condition(e.g F_TURBO_VRC_ILK Function), otherwise, Set to True if the valve is not interlocked
-    i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforces*)
+    i_xOverrideMode : BOOL; (*To be linked to global override bit. This Overrides Vacuum logic only, EPS, MPS and PMPS are still enforced.
+                                The override only replaces the operator open request, it never bypasses the
+                                external interlock permit (i_xExtILK_OK -> iq_stValve.xOPN_OK)*)
 END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := '
@@ -63,7 +65,9 @@ END_IF
 (*evaluate Valve open external interlock*)
 iq_stValve.xOPN_OK := i_xExtILK_OK;
 iq_stValve.xEXT_OK := i_xExtILK_OK;
-IF NOT iq_stValve.xOPN_OK and NOT tonOvrd.Q THEN
+(* The interlock fault is reported and the command dropped whenever the external permit is FALSE,
+   whether or not a manual override is active: an override must never hide an interlock fault.*)
+IF NOT iq_stValve.xOPN_OK THEN
     iq_stValve.pv_xOPN_SW := FALSE;
     iq_stValve.eVGC_State := ERR_ExtFault;
 END_IF
@@ -75,7 +79,9 @@ END_IF
 (* Override logic *)
 (* Goal: give ability to override, but do so in a way that people won't forget it.
 Solution: Override only after ten seconds of override, protect against blips,
-when the valve permission goes true for more than ten seconds consistently, remove override
+when the valve permission goes true for more than ten seconds consistently, remove override.
+The override only replaces the open request: it is not a bypass of the external interlock, and the
+interlock fault is still reported while it is active
 *)
 
 tonDelOK(IN:=iq_stValve.xOPN_OK, PT:=T#10S);
@@ -91,7 +97,11 @@ END_IF
 tonOvrd(IN:=iq_stValve.pv_xOvrdOpn, PT:=T#10S);
 
 (* Here's where the valve opens *)
-iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW AND iq_stValve.xOPN_OK) OR (tonOvrd.Q AND i_xOverrideMode);
+(* The manual override replaces the operator open request only; it is never a way around an interlock.
+   This block receives a single site permit (i_xExtILK_OK -> iq_stValve.xOPN_OK) that sums every
+   interlock that is not explicitly overridable vacuum logic, so the override term is placed in series
+   with xOPN_OK instead of being ORed around it.*)
+iq_stValve.q_xOPN_DO := (iq_stValve.pv_xOPN_SW OR (tonOvrd.Q AND i_xOverrideMode)) AND iq_stValve.xOPN_OK;
 
 ///Check valve moving postion timout
 IF NOT iq_stValve.i_xClsLS AND tCLStimeout.Q THEN
