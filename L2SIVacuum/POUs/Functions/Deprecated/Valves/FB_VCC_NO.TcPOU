@@ -29,6 +29,12 @@ VAR
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[
+(* External interlock permit: i_xExtILK_OK is the caller's interlock verdict and is the
+   close permission of this normally open valve. It drives iq_stValve.xCLS_OK, which gates
+   both the close command and the FORCE_CLS override in the logic below (same pattern as
+   FB_VRC_NO and FB_VVC). *)
+iq_stValve.xCLS_OK := i_xExtILK_OK;
+
 IF NOT iq_stValve.xCLS_OK THEN
 iq_stValve.pv_xCLS_SW := FALSE;
 END_IF
