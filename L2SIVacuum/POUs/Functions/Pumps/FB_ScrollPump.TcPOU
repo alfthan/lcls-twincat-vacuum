@@ -16,7 +16,7 @@ VAR_OUTPUT
     iq_stPFO	:	ST_RoughPump;
 END_VAR
 VAR_INPUT
-    TurboIsON : BOOL;
+    xTurboIsON : BOOL; // TRUE while the turbo pump is running
     xExtIlk : BOOL;
 END_VAR
 VAR
@@ -35,7 +35,7 @@ END_VAR
 // cannot turn off scroll pump if turb is running. delay scroll off 150s.
 iq_stPFO.xIlkOK := xExtIlk;// and NOT Tmr_TOF.Q;
 
-Tmr_TOF(IN:=TurboIsON, PT := tTimerDuration);
+Tmr_TOF(IN:=xTurboIsON, PT := tTimerDuration);
 
 IF iq_stPFO.xIlkOK THEN
     iq_stPFO.q_xRunDo := (Tmr_TOF.Q OR iq_stPFO.pv_xRunSW);
@@ -67,12 +67,12 @@ IO();
     <Method Name="M_Run" Id="{eba797a4-1012-42f7-b194-fa0d2f89ba57}">
       <Declaration><![CDATA[METHOD PUBLIC M_Run : BOOL
 VAR_INPUT
-    run:bool; // set to true to run, false to stop;
+    xRun : BOOL; // set to TRUE to run, FALSE to stop
 END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[
-this^.iq_stPFO.pv_xRunSW := run;]]></ST>
+this^.iq_stPFO.pv_xRunSW := xRun;]]></ST>
       </Implementation>
     </Method>
   </POU>
