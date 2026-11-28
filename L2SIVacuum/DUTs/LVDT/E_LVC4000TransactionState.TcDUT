@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="E_LVC4000TransactionState" Id="{2f1c8a64-6bd9-4a3e-9d2c-5b7e0d4c9a11}">
+    <Declaration><![CDATA[TYPE E_LVC4000TransactionState :
+(
+    (* Named steps of the FB_LVC4000Transaction serial transaction machine.
+       The numeric values are the step counter; the gaps between them leave
+       room for inserting further steps without renumbering existing ones.
+
+       Transition of each step is documented on the step and in the header of
+       FB_LVC4000Transaction:
+         lvcIdle            -> lvcClearComBuffers on the rising edge of i_xExecute
+         lvcClearComBuffers -> lvcBuildRequest
+         lvcBuildRequest    -> lvcSendRequest
+         lvcSendRequest     -> lvcAwaitSendComplete
+         lvcAwaitSendComplete -> lvcResetReceiver when a reply is expected
+                             -> lvcDone when the command is not answered
+                             -> lvcError on a transmit error
+         lvcResetReceiver   -> lvcAwaitReply
+         lvcAwaitReply      -> lvcEvaluateReply on reply, receive error or timeout
+         lvcEvaluateReply   -> lvcDone on a valid reply
+                             -> lvcError on a receive error or on timeout
+         lvcDone            -> lvcIdle when i_xExecute is dropped
+         lvcError           -> latched, restarted by the next rising edge *)
+
+    // Idle: no action, waiting for a rising edge on i_xExecute
+    lvcIdle := 0,
+    // Clear the receive and the transmit buffer
+    lvcClearComBuffers := 10,
+    // Format the request string from address, command and parameter
+    lvcBuildRequest := 20,
+    // Hand the request string to the transmit block
+    lvcSendRequest := 30,
+    // Wait for the transmit block to report completion
+    lvcAwaitSendComplete := 40,
+    // Reset the receive block and the reply timeout
+    lvcResetReceiver := 50,
+    // Poll the receive block, bounded by the reply timeout
+    lvcAwaitReply := 60,
+    // Classify the reply and latch the outcome
+    lvcEvaluateReply := 70,
+    // Hold q_xDone until the caller drops i_xExecute
+    lvcDone := 100,
+    // Latch q_xError until the next rising edge of i_xExecute
+    lvcError := 9000
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
