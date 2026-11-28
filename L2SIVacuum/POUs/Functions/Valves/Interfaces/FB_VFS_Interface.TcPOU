@@ -1,8 +1,23 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="FB_VFS_Interface" Id="{57bc9317-df03-4829-82d4-3e35e70264fe}" SpecialFunc="None">
-    <Declaration><![CDATA[(*Used as soft IO mapping to create a psuedo valve to communicate over two task on the same PLC.*)
-(*for FAST shutter control*)
+    <Declaration><![CDATA[(* Used as soft IO mapping to create a psuedo valve to communicate over two task on the same PLC.
+   For FAST shutter control. The block mirrors a fast shutter/valve between the normal task and the fast task
+   and publishes its commands, position, interlock and error data through the ST_VFS interface struct.
+
+   Override policy: the manual open override (ST_ValveBase.pv_xOvrdOpn / FORCE_OPN) is released when the open
+   permit xOPN_OK has been continuously good for tDelOK, or when this block releases the retained request
+   itself. The override-open command is additionally bounded by tOpnTimeout: the safe-condition wait above runs
+   on xOPN_OK, so a valve that never reaches the open position would leave that wait un-timed and the override
+   active indefinitely. The timeout therefore starts when the open/override command is in effect, counts its
+   expiry as a failed request and latches an explicit fault (ST_ValveBase.bErrorPresent / sErrorMessage), which
+   is acknowledged through pv_xAlmRst.
+
+   History:
+   2026-11-28  Scirix agent (task #397)  Added the fault-raising override-open timeout (tonOpnTimeout), released
+                                        the retained override request on the permit-restored expiry and added
+                                        ACT_ResetAlarms to acknowledge the latched fault.
+*)
 FUNCTION_BLOCK FB_VFS_Interface EXTENDS FB_Valve
 VAR_INPUT
     IG : ST_VG; // The MKS422 Cold Cathode Data Structure
@@ -18,12 +33,15 @@ END_VAR
 VAR
     rtTriggerVetoed : R_TRIG;
     rtTriggered : R_TRIG;
-    tonOvrd	:	TON;
-    tOvrd	:	TIME := T#10s;
-    rtOK	:	R_TRIG;
-    tonDelOK : TON;
-    xOPN_OK : BOOL;
-    tDelOK	:	TIME := T#60S;
+    tonOvrd	:	TON;	// Override qualification timer, TRUE once the override request has been held for tOvrd
+    tOvrd	:	TIME := T#10s;	// Override qualification time, protects against blips of the override request
+    tonDelOK : TON;	// Safe-condition timer, TRUE once the open permit xOPN_OK has been continuously good for tDelOK
+    xOPN_OK : BOOL;	// Current open permit: vacuum fault OK and no trigger that is not vetoed
+    tDelOK	:	TIME := T#60S;	// Time the open permit must stay good before the override is released
+    tonOpnTimeout : TON;	// Override-open command timeout, TRUE when the commanded open is not reached in tOpnTimeout
+    rtOpnTimeout : R_TRIG;	// Rising edge of tonOpnTimeout.Q, counts and latches an expiry once per failed request
+    tOpnTimeout : TIME := T#10S;	// Maximum time the override-open command may run without the valve reporting open
+    nOpnTimeoutCount : UINT;	// Open/override requests that timed out and were released, cleared on alarm reset
 
     (*outputs*)
     q_xPRESS_OK AT%Q*: BOOL;
@@ -71,20 +89,49 @@ ELSIF NOT iq_stValve.i_xClsLS AND NOT iq_stValve.i_xOpnLS THEN
 ELSE
     iq_stValve.eState:=INVALID;
 END_IF
-//Override timer
-tonOvrd(IN:=q_xOverrideOpen, PT:=tOvrd);
+(*OPN OK evaluation bit *)
+xOPN_OK := (i_xVAC_FAULT_OK) AND (NOT i_xTrigger OR (q_xVetoValveClosed AND NOT q_xVetoValveOpenDO)) ;
+
+(* Override logic *)
+(* Goal: give ability to override, but do so in a way that people won't forget it.
+Solution: Override only after ten seconds of override, protect against blips,
+when the valve permission goes true for more than ten seconds consistently, remove override.
+An override request is never open ended: if the commanded open is not reached, the request is counted as a
+failed request, an explicit fault is latched and the retained request is released.
+*)
+
+(* Safe-condition release. Level triggered on purpose instead of on the rising edge of tonDelOK.Q: an override
+requested while the permit has already been good for tDelOK is not needed either and is released as well. *)
 tonDelOK(IN:=xOPN_OK, PT:=tDelOK);
-rtOK(CLK:=tonDelOK.Q);
-IF rtOK.Q AND q_xOverrideOpen THEN
+IF tonDelOK.Q AND iq_stValve.pv_xOvrdOpn THEN
+    iq_stValve.pv_xOvrdOpn := FALSE; // Release the retained request, IO() republishes q_xOverrideOpen from it
     q_xOverrideOpen :=FALSE;
     //if (i_xOpnLS) AND (i_xOverrideMode) THEN i_xOPN_SW := TRUE; END_IF //for seamless transition
     //Log
     fbLogger(sMsg:='Override expired', eSevr:=TcEventSeverity.Warning);
 END_IF
-(*OPN OK evaluation bit *)
-xOPN_OK := (i_xVAC_FAULT_OK) AND (NOT i_xTrigger OR (q_xVetoValveClosed AND NOT q_xVetoValveOpenDO)) ;
+
+//Override qualification timer
+tonOvrd(IN:=q_xOverrideOpen, PT:=tOvrd);
+
+(* Override-open timeout *)
+(* Bounds the open/override command itself: the timer runs while the qualified override is actually in effect
+and the valve has not reported open yet, so an expiry means the valve never reached the open position. Expiry
+is counted as a failed request, latched as an explicit fault and releases the override, so neither the
+override nor the wait for the open position can stay active indefinitely. *)
+tonOpnTimeout(IN:= tonOvrd.Q AND iq_stValve.xOverrideMode AND iq_stValve.pv_xOvrdOpn AND NOT i_xVFS_Open, PT:= tOpnTimeout);
+rtOpnTimeout(CLK:= tonOpnTimeout.Q);
+IF rtOpnTimeout.Q THEN
+    iq_stValve.bErrorPresent := TRUE;
+    iq_stValve.sErrorMessage := 'Override open timeout: valve did not reach open';
+    nOpnTimeoutCount := nOpnTimeoutCount + 1;
+    iq_stValve.pv_xOvrdOpn := FALSE;
+    q_xOverrideOpen :=FALSE;
+END_IF
 (* Soft IO Mapping*)
 IO();
+(*Alarm reset, after IO() so q_xVAC_FAULT_Reset still pulses TRUE in the scan the reset is requested*)
+ACT_ResetAlarms();
 (*Logger*)
 ACT_Logger();]]></ST>
     </Implementation>
@@ -133,6 +180,19 @@ IF rtTriggerVetoed.Q THEN fbLogger(sMsg:='Valve triggered while veto device is i
 
 rtTriggered(CLK:= (NOT q_xPRESS_OK OR i_xTrigger) AND ( q_xVetoValveOpenDO AND NOT q_xVetoValveClosed));
 IF rtTriggered.Q THEN fbLogger(sMsg:='Fast valve triggered!', eSevr:=TcEventSeverity.Critical); END_IF]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="ACT_ResetAlarms" Id="{7da18f0b-99a1-4b38-9985-68f6928744e1}">
+      <Implementation>
+        <ST><![CDATA[(* Acknowledge the latched fault. bErrorPresent stays set until pv_xAlmRst is requested, so a
+dropped command or a transient input cannot dismiss it. *)
+iq_stValve.bErrorPresent R= iq_stValve.pv_xAlmRst;
+
+IF ( iq_stValve.pv_xAlmRst) THEN
+    iq_stValve.sErrorMessage :='';
+    nOpnTimeoutCount := 0;
+    iq_stValve.pv_xAlmRst := FALSE;
+END_IF]]></ST>
       </Implementation>
     </Action>
     <Action Name="IO" Id="{312ade16-8536-4df0-9a4e-8f0b63330a33}">
