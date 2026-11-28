@@ -4,6 +4,8 @@
     <Declaration><![CDATA[(* This function block is created for interface devices between different PLC*)
 (* Not all the fields in the original structure is required, just few signals *)
 (*Use with FB_ADS_WATCHDOG on remotePLC*)
+(* The ADS read is bounded by tAdsTimeout (inherited from FB_ADS); an expiry raises bAdsTimeOut*)
+(* History: 2026-11-28 - explicit ADS read timeout, expiry fault and error edge call (finding #720)*)
 FUNCTION_BLOCK FB_TVGC_ADS extends FB_ADS
 VAR_INPUT
     sNetId : String; //NetID of the Destination PLC controller
@@ -14,7 +16,7 @@ END_VAR
 VAR_OUTPUT
     {attribute 'pytmc' := 'pv: '}
     VGC:ST_VGC;
-    bError:BOOL;
+    bError:BOOL; //Live fault: ADS read error, ADS read timeout or remote watchdog expiry
 END_VAR
 VAR
     fb_CheckWatchdog: FB_CheckWatchdog;
@@ -34,21 +36,24 @@ fb_Read_VGC(
     sVarName:= CONCAT(sVarName,'.iq_stValve'),
     nDestAddr:= ADR(VGC),
     nLen:= SIZEOF(VGC),
-    tTimeout:= ,
+    tTimeout:= tAdsTimeout,
     eComMode:= eAdsComModeFastCom,
     bBusy=> ,
     bError=> ,
     nErrorId=> );
 
 
-(*Error*)
+(*Error: remote counter watchdog plus the ADS read timeout supervisor*)
 fb_CheckWatchdog(
     bEnable:= TRUE,
     tWatchdogTime:= T#900ms,
     nCnt:= iWatchdog ,
     bWatchdog=> ,
     nLastCnt=> );
-bError:= fb_Read_VGC.bError OR fb_CheckWatchdog.bWatchdog;
+(*A read that does not complete within tAdsTimeout is a failed read, not a healthy one*)
+bError:= fb_Read_VGC.bError OR fb_CheckWatchdog.bWatchdog OR M_AdsTimeout(bBusy:= fb_Read_VGC.bBusy);
+(*edge detector of the base block; without this call no ADS fault would ever be logged*)
+tErrorPresent(CLK:= bError);
 
 ACT_Logger();]]></ST>
     </Implementation>
@@ -57,6 +62,7 @@ ACT_Logger();]]></ST>
         <ST><![CDATA[IF tErrorPresent.Q THEN
  IF(fb_Read_VGC.bError) THEN fbLogger(sMsg:='ADS Read Error', eSevr:=TcEventSeverity.Critical); END_IF;
  IF(fb_CheckWatchdog.bWatchdog) THEN fbLogger(sMsg:='ADS Watchdog Error', eSevr:=TcEventSeverity.Critical); END_IF;
+ IF(bAdsTimeOut) THEN fbLogger(sMsg:='ADS Read Timeout Error: remote PLC did not complete the ADS read within tAdsTimeout', eSevr:=TcEventSeverity.Critical); END_IF;
 END_IF
 ]]></ST>
       </Implementation>

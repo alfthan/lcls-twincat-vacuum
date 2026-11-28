@@ -4,6 +4,9 @@
     <Declaration><![CDATA[VAR_GLOBAL CONSTANT
     gc_iSizeOfGGOArray : INT := 50;
     gc_GaugeValidState :	INT := 4;
+    (* Explicit timeout applied to every cross-PLC ADS read. Kept longer than the
+       T#900ms remote-counter watchdog so a slow read is not reported twice. *)
+    gc_tAdsReadTimeout : TIME := T#1S;
 END_VAR
 ]]></Declaration>
   </GVL>
